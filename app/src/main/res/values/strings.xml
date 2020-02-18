@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="app_name">Message Board</string>
+  <string name="error_missing_permissions">Cannot start without required permissions</string>
+  <string name="device_name_not_set">Device name: not set</string>
+  <string name="enter_message_here">Enter Message Here!</string>
+  <string name="send_message">Send Message</string>
+  <string name="active_connections_0">Active Connections: 0</string>
+  <string name="no_messages_yet">No messages yet!</string>
+</resources>
