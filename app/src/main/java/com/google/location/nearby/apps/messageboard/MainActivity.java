@@ -34,6 +34,15 @@ import com.google.android.gms.nearby.connection.Strategy;
 
 import java.util.ArrayList;
 
+/*
+
+TODO:
+
+1) Have sample app show names of the connected devices in some sort of list view
+2) automatically search and connect to other devices
+  - follow my advertiser/discoverer strategy I wrote up
+ */
+
 /** Activity controlling the Message Board */
 public class MainActivity extends AppCompatActivity {
 
