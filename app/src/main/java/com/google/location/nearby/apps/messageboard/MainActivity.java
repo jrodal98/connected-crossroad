@@ -69,10 +69,11 @@ public class MainActivity extends AppCompatActivity {
   private final String codeName = CodenameGenerator.generate();
 
   private ArrayList<String> endpointIds = new ArrayList<>();
-  private ArrayList<String> names = new ArrayList<>();
-
-  private String myName;
-
+  private String discovererId = "";
+  private String advertiserId = "";
+  private int numInNetwork = 1;
+  private int sentNum = 0;
+  private int receivedNum = 0;
   private Button sendMessageButton;
 
   private TextView numConnectedText;
@@ -85,7 +86,8 @@ public class MainActivity extends AppCompatActivity {
       new PayloadCallback() {
         @Override
         public void onPayloadReceived(String endpointId, Payload payload) {
-          setLastMessage(new String(payload.asBytes(), UTF_8));
+//          setLastMessage(new String(payload.asBytes(), UTF_8));
+            sendMessage(new String(payload.asBytes(), UTF_8), endpointId);
         }
 
         @Override
@@ -101,8 +103,14 @@ public class MainActivity extends AppCompatActivity {
       new EndpointDiscoveryCallback() {
         @Override
         public void onEndpointFound(String endpointId, DiscoveredEndpointInfo info) {
-          Log.i(TAG, "onEndpointFound: endpoint found, connecting");
-          connectionsClient.requestConnection(codeName, endpointId, connectionLifecycleCallback);
+          if (!info.getEndpointName().equals(codeName)) {
+            Log.i(TAG, "onEndpointFound: endpoint found, connecting");
+            connectionsClient.requestConnection(codeName, endpointId, connectionLifecycleCallback);
+            requestedConnectionTo = endpointId;
+          }
+          else {
+            Log.d(TAG, "tried to connect to self...");
+          }
         }
 
         @Override
@@ -114,32 +122,61 @@ public class MainActivity extends AppCompatActivity {
       new ConnectionLifecycleCallback() {
         @Override
         public void onConnectionInitiated(String endpointId, ConnectionInfo connectionInfo) {
-          Log.i(TAG, "onConnectionInitiated: accepting connection");
-          connectionsClient.acceptConnection(endpointId, payloadCallback);
-          names.add(connectionInfo.getEndpointName());
-        }
+            if (requestedConnectionTo.equals(endpointId)) {
+              Log.i(TAG, "onConnectionInitiated: accepting connection as the discoverer");
+              advertiserId = endpointId;
+              connectionsClient.acceptConnection(endpointId, payloadCallback);
+            }
+            else {
+              Log.i(TAG, "onConnectionInitiated: accepting connection as the advertiser");
+              discovererId = endpointId;
+              connectionsClient.acceptConnection(endpointId, payloadCallback);
+            }
+          }
 
         @Override
         public void onConnectionResult(String endpointId, ConnectionResolution result) {
           if (result.getStatus().isSuccess()) {
             Log.i(TAG, "onConnectionResult: connection successful");
 
-            connectionsClient.stopDiscovery();
-            connectionsClient.stopAdvertising();
+            if (endpointId.equals(discovererId)) {
+              connectionsClient.stopAdvertising();
+            }
+            else {
+              connectionsClient.stopDiscovery();
+            }
 
-            endpointIds.add(endpointId);
-            numConnectedText.setText(String.format("Active Connections: %d", endpointIds.size()));
+            // TODO: send new num of active connections through the entire network
+//            endpointIds.add(endpointId);
+//            numConnectedText.setText(String.format("Active Connections: %d", endpointIds.size()));
 //            setButtonState(true);
           } else {
+            if (endpointId.equals(discovererId)) {
+              discovererId = "";
+            }
+            if (endpointId.equals(advertiserId)) {
+              discovererId = "";
+            }
             Log.i(TAG, "onConnectionResult: connection failed");
           }
         }
 
         @Override
         public void onDisconnected(String endpointId) {
+          if (endpointId.equals(discovererId)) {
+            discovererId = "";
+            requestedConnectionTo = "";
+            startDiscovery();
+          }
+          if (endpointId.equals(advertiserId)) {
+            advertiserId = "";
+            requestedConnectionTo = "";
+            startAdvertising();
+          }
           Log.i(TAG, "onDisconnected: disconnected from network");
         }
       };
+  private String requestedConnectionTo = "";
 
   @Override
   protected void onCreate(@Nullable Bundle bundle) {
@@ -152,16 +189,19 @@ public class MainActivity extends AppCompatActivity {
     lastMessage = findViewById(R.id.lastMessage);
     sendMessageText = findViewById(R.id.editTextField);
 
+
     deviceNameText.setText(String.format("Device name: %s", codeName));
 
     sendMessageButton.setOnClickListener(new View.OnClickListener() {
       @Override
       public void onClick(View view) {
-        sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()));
+        sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
       }
     });
 
     connectionsClient = Nearby.getConnectionsClient(this);
+    startAdvertising();
+    startDiscovery();
   }
 
   @Override
@@ -239,16 +279,41 @@ public class MainActivity extends AppCompatActivity {
 
 
   /** Sends the user's selection of rock, paper, or scissors to the opponent. */
-  private void sendMessage(String message) {
-    for (String id: endpointIds) {
+  private void sendMessage(String message, String ignoreId) {
+     if (!advertiserId.equals(ignoreId)) {
+       Log.d(TAG,"Sending message to the advertiser");
+       connectionsClient.sendPayload(
+               advertiserId, Payload.fromBytes(message.getBytes(UTF_8)));
+     }
+    if (!discovererId.equals(ignoreId)) {
+      Log.d(TAG,"Sending message to the discoverer");
       connectionsClient.sendPayload(
-              id, Payload.fromBytes(message.getBytes(UTF_8)));
+              discovererId, Payload.fromBytes(message.getBytes(UTF_8)));
     }
 
+    Log.d(TAG,"setting message board");
     lastMessage.setText(message);
   }
 
   private void setLastMessage(String message) {
     lastMessage.setText(message);
+  }
+
+  private void sendNumInNetwork(String endpointId) {
+    Log.d(TAG,"Sending number of nodes in network...");
+    sentNum = numInNetwork;
+    String msg = "MSG 0: " + sentNum;
+    connectionsClient.sendPayload(endpointId,Payload.fromBytes(msg.getBytes(UTF_8)));
+
+  }
+
+  private void setNumInNetwork() {
+    if (sentNum != 0 && receivedNum != 0) {
+      numInNetwork = sentNum + receivedNum;
+      sentNum = 0;
+      receivedNum = 0;
+      numConnectedText.setText(String.format("Devices in network: %d",numInNetwork));
+
+    }
   }
 }

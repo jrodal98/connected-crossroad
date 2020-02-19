@@ -7,4 +7,5 @@
   <string name="send_message">Send Message</string>
   <string name="active_connections_0">Active Connections: 0</string>
   <string name="no_messages_yet">No messages yet!</string>
+    <string name="devices_in_network_1">Devices in network: 1</string>
 </resources>

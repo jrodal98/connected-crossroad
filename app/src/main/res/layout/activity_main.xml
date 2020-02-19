@@ -30,7 +30,7 @@
         android:id="@+id/numConnectionsText"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:text="@string/active_connections_0"
+        android:text="@string/devices_in_network_1"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
 
