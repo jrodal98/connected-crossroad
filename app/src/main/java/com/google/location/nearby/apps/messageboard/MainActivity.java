@@ -97,6 +97,50 @@ public class MainActivity extends AppCompatActivity {
               setNumInNetwork();
               sendMessage(msg, endpointId);
             }
+            else if (msg.startsWith("MSG 2: ")) {
+              int disEmpty = Integer.parseInt(msg.substring(7,8));
+              int adEmpty = Integer.parseInt(msg.substring(8,9));
+              if (disEmpty == 0 || !discovererId.equals("")) {
+                advertiserId = endpointId;
+                Log.d(TAG,"Stopping discovery");
+                connectionsClient.stopDiscovery();
+              }
+
+              else if (adEmpty == 0 || !advertiserId.equals("")) {
+                discovererId = endpointId;
+                Log.d(TAG, "Stopping advertising");
+                if (numInNetwork == 1) {
+                  connectionsClient.stopDiscovery();
+                  // TODO: this is a temporary hacky fix for preventing a cycle in my network
+                  // I think this solution would work in theory only if one giant network was formed
+                  // if two smaller networks are formed, they wouldn't be able to connect to each other
+                  // Look into echoing a message and then disconnecting if necessary.
+                }
+                connectionsClient.stopAdvertising();
+                sendNumInNetwork(endpointId);
+              }
+              else {
+                String name = msg.substring(9);
+                if (name.compareTo(codeName) < 0) {
+                  advertiserId = endpointId;
+                  Log.d(TAG,"Stopping discovery");
+                  connectionsClient.stopDiscovery();
+                }
+                else {
+                  discovererId = endpointId;
+                  Log.d(TAG, "Stopping advertising");
+                  if (numInNetwork == 1) {
+                    connectionsClient.stopDiscovery();
+                    // TODO: this is a temporary hacky fix for preventing a cycle in my network
+                    // I think this solution would work in theory only if one giant network was formed
+                    // if two smaller networks are formed, they wouldn't be able to connect to each other
+                    // Look into echoing a message and then disconnecting if necessary.
+                  }
+                  connectionsClient.stopAdvertising();
+                  sendNumInNetwork(endpointId);
+                }
+              }
+            }
             else {
               sendMessage(msg, endpointId);
             }
@@ -133,16 +177,8 @@ public class MainActivity extends AppCompatActivity {
       new ConnectionLifecycleCallback() {
         @Override
         public void onConnectionInitiated(String endpointId, ConnectionInfo connectionInfo) {
-            if (connectionInfo.isIncomingConnection()) {
-              Log.i(TAG, "onConnectionInitiated: accepting connection as the discoverer");
-              advertiserId = endpointId;
+              Log.i(TAG, "onConnectionInitiated: accepting connection");
               connectionsClient.acceptConnection(endpointId, payloadCallback);
-            }
-            else {
-              Log.i(TAG, "onConnectionInitiated: accepting connection as the advertiser");
-              discovererId = endpointId;
-              connectionsClient.acceptConnection(endpointId, payloadCallback);
-            }
           }
 
         @Override
@@ -150,15 +186,8 @@ public class MainActivity extends AppCompatActivity {
           if (result.getStatus().isSuccess()) {
             Log.i(TAG, "onConnectionResult: connection successful");
 
-            if (endpointId.equals(discovererId)) {
-              Log.d(TAG, "Stopping advertising");
-              connectionsClient.stopAdvertising();
-              sendNumInNetwork(endpointId);
-            }
-            else {
-              Log.d(TAG,"Stopping discovery");
-              connectionsClient.stopDiscovery();
-            }
+            sendConnectInfo(endpointId);
+
 
           } else {
             if (endpointId.equals(discovererId)) {
@@ -184,6 +213,7 @@ public class MainActivity extends AppCompatActivity {
           Log.i(TAG, "onDisconnected: disconnected from network");
         }
       };
+  private String foundAdvertiserId;
 
   @Override
   protected void onCreate(@Nullable Bundle bundle) {
@@ -287,12 +317,13 @@ public class MainActivity extends AppCompatActivity {
 
   /** Sends the user's selection of rock, paper, or scissors to the opponent. */
   private void sendMessage(String message, String ignoreId) {
-     if (!advertiserId.equals(ignoreId)) {
+    Log.d(TAG,String.format("name: %s, discoverer id: %s, advertiser id: %s, ignore id: %s",codeName,discovererId,advertiserId,ignoreId));
+     if (!advertiserId.equals("") && !advertiserId.equals(ignoreId)) {
        Log.d(TAG,"Sending message to the advertiser");
        connectionsClient.sendPayload(
                advertiserId, Payload.fromBytes(message.getBytes(UTF_8)));
      }
-    if (!discovererId.equals(ignoreId)) {
+    if (!discovererId.equals("") && !discovererId.equals(ignoreId)) {
       Log.d(TAG,"Sending message to the discoverer");
       connectionsClient.sendPayload(
               discovererId, Payload.fromBytes(message.getBytes(UTF_8)));
@@ -311,6 +342,13 @@ public class MainActivity extends AppCompatActivity {
   private void sendNumInNetwork(String endpointId) {
     Log.d(TAG,"Sending number of nodes in network...");
     String msg = "MSG 0: " + numInNetwork;
+    connectionsClient.sendPayload(endpointId,Payload.fromBytes(msg.getBytes(UTF_8)));
+
+  }
+
+  private void sendConnectInfo(String endpointId) {
+    Log.d(TAG,"Sending info about current endpoints...");
+    String msg = String.format("MSG 2: %d%d%s",discovererId.isEmpty()? 1 : 0,advertiserId.isEmpty()? 1: 0,codeName);
     connectionsClient.sendPayload(endpointId,Payload.fromBytes(msg.getBytes(UTF_8)));
 
   }
