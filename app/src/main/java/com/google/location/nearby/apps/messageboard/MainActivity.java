@@ -33,13 +33,17 @@ import com.google.android.gms.nearby.connection.PayloadTransferUpdate.Status;
 import com.google.android.gms.nearby.connection.Strategy;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.HashSet;
 
 /*
 
 TODO: keep different sets of the endpoints connected to the discoverer and the endpoints connected to the advertiser
-When you disconnect from one, you know what is no longer in the network and the new size of the network!
+When you disconnect from one, you know what is no longer in the network and the new size of the network
+
+rename advertiser to discovered
+rename discoverer to advertised
+
+More intuitive
  */
 
 
@@ -68,8 +72,8 @@ public class MainActivity extends AppCompatActivity {
   // Our randomly generated name
   private final String codeName = CodenameGenerator.generate();
 
-  private String discovererId = "";
-  private String advertiserId = "";
+  private Node discoverer;
+  private Node advertiser;
   private int numInNetwork = 1;
   private Button sendMessageButton;
 
@@ -108,14 +112,14 @@ public class MainActivity extends AppCompatActivity {
   private void handleMsg2(String msg, String endpointId) {
     int disEmpty = Integer.parseInt(msg.substring(7,8));
     int adEmpty = Integer.parseInt(msg.substring(8,9));
-    if (disEmpty == 0 || !discovererId.equals("")) {
-      advertiserId = endpointId;
+    if (disEmpty == 0 || discoverer.isAssigned()) {
+      advertiser.setId(endpointId);
       Log.d(TAG,"Stopping discovery");
       connectionsClient.stopDiscovery();
     }
 
-    else if (adEmpty == 0 || !advertiserId.equals("")) {
-      discovererId = endpointId;
+    else if (adEmpty == 0 || advertiser.isAssigned()) {
+      discoverer.setId(endpointId);
       Log.d(TAG, "Stopping advertising");
       if (numInNetwork == 1) {
         connectionsClient.stopDiscovery();
@@ -130,12 +134,12 @@ public class MainActivity extends AppCompatActivity {
     else {
       String name = msg.substring(9);
       if (name.compareTo(codeName) < 0) {
-        advertiserId = endpointId;
+        advertiser.setId(endpointId);
         Log.d(TAG,"Stopping discovery");
         connectionsClient.stopDiscovery();
       }
       else {
-        discovererId = endpointId;
+        discoverer.setId(endpointId);
         Log.d(TAG, "Stopping advertising");
         if (numInNetwork == 1) {
           connectionsClient.stopDiscovery();
@@ -172,11 +176,11 @@ public class MainActivity extends AppCompatActivity {
                   }
                 } else {
                   HashSet<String> ids = (HashSet<String>) deserialized;
-                  if (endpointId.equals(discovererId)) {
-                    discoveredSet = ids;
+                  if (discoverer.isSameId(endpointId)) {
+                    discoverer.mergeEndpoints(ids);
                   }
-                  else if (endpointId.equals(advertiserId)) {
-                    advertisedSet = ids;
+                  else if (advertiser.isSameId(endpointId)) {
+                      advertiser.mergeEndpoints(ids);
                   }
                 }
               } catch (IOException | ClassNotFoundException e) {
@@ -228,11 +232,11 @@ public class MainActivity extends AppCompatActivity {
 
 
           } else {
-            if (endpointId.equals(discovererId)) {
-              discovererId = "";
+            if (discoverer.isSameId(endpointId)) {
+              discoverer.clear();
             }
-            if (endpointId.equals(advertiserId)) {
-              discovererId = "";
+            if (advertiser.isSameId(endpointId)) {
+              advertiser.clear();
             }
             Log.i(TAG, "onConnectionResult: connection failed");
           }
@@ -241,14 +245,14 @@ public class MainActivity extends AppCompatActivity {
         @Override
         public void onDisconnected(String endpointId) {
           numInNetwork = 1;
-          if (endpointId.equals(discovererId)) {
-            discovererId = "";
-            sendNumInNetwork(advertiserId);
+          if (discoverer.isSameId(endpointId)) {
+            discoverer.clear();
+            sendNumInNetwork(advertiser.getId());
             startDiscovery();
           }
-          if (endpointId.equals(advertiserId)) {
-            advertiserId = "";
-            sendNumInNetwork(discovererId);
+          if (advertiser.isSameId(endpointId)) {
+            advertiser.clear();
+            sendNumInNetwork(discoverer.getId());
             startAdvertising();
           }
           Log.i(TAG, "onDisconnected: disconnected from network");
@@ -350,16 +354,16 @@ public class MainActivity extends AppCompatActivity {
 
   /** Sends the user's selection of rock, paper, or scissors to the opponent. */
   private void sendMessage(String message, String ignoreId) {
-    Log.d(TAG,String.format("name: %s, discoverer id: %s, advertiser id: %s, ignore id: %s",codeName,discovererId,advertiserId,ignoreId));
-     if (!advertiserId.equals("") && !advertiserId.equals(ignoreId)) {
+    Log.d(TAG,String.format("name: %s, discoverer id: %s, advertiser id: %s, ignore id: %s",codeName,discoverer.getId(),advertiser.getId(),ignoreId));
+     if (advertiser.isAssigned() && !advertiser.isSameId(ignoreId)) {
        Log.d(TAG,"Sending message to the advertiser");
        connectionsClient.sendPayload(
-               advertiserId, Payload.fromBytes(message.getBytes(UTF_8)));
+               advertiser.getId(), Payload.fromBytes(message.getBytes(UTF_8)));
      }
-    if (!discovererId.equals("") && !discovererId.equals(ignoreId)) {
+    if (discoverer.isAssigned() && !discoverer.isSameId(ignoreId)) {
       Log.d(TAG,"Sending message to the discoverer");
       connectionsClient.sendPayload(
-              discovererId, Payload.fromBytes(message.getBytes(UTF_8)));
+              discoverer.getId(), Payload.fromBytes(message.getBytes(UTF_8)));
     }
 
     if (!message.startsWith("MSG")) {
@@ -381,7 +385,7 @@ public class MainActivity extends AppCompatActivity {
 
   private void sendConnectInfo(String endpointId) {
     Log.d(TAG,"Sending info about current endpoints...");
-    String msg = String.format("MSG 2: %d%d%s",discovererId.isEmpty()? 1 : 0,advertiserId.isEmpty()? 1: 0,codeName);
+    String msg = String.format("MSG 2: %d%d%s",discoverer.isAssigned()? 0 : 1, advertiser.isAssigned()? 0: 1,codeName);
     connectionsClient.sendPayload(endpointId,Payload.fromBytes(msg.getBytes(UTF_8)));
 
   }
