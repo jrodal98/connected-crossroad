@@ -38,6 +38,10 @@ public class Node {
         return !type.isEmpty();
     }
 
+    public boolean contains(String id) {
+        return endpoints.contains(id);
+    }
+
 
 
     public void clear() {

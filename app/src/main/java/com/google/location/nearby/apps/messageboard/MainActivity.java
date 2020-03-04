@@ -81,10 +81,6 @@ public class MainActivity extends AppCompatActivity {
   private TextView deviceNameText;
   private TextView lastMessage;
   private EditText sendMessageText;
-  private HashSet<String> endpoints;
-  private HashSet<String> discoveredSet;
-  private HashSet<String> advertisedSet;
-
 
   /*
   Sent when a discoverer and an advertiser first connect
@@ -94,14 +90,14 @@ public class MainActivity extends AppCompatActivity {
   network determines the total size of the new network. Then, that size is propogated to all
   other nodes in the network via the MSG 1
    */
-  private void handleMsg0(String msg) {
+  private void handleMsg0(String msg) throws IOException {
     setNumInNetwork(numInNetwork + Integer.parseInt(msg.substring(7)));
     msg = "MSG 1: " + numInNetwork;
     sendMessage(msg, "");
   }
 
   // propagates a network size through the network
-  private void handleMsg1(String msg, String endpointId) {
+  private void handleMsg1(String msg, String endpointId) throws IOException {
     setNumInNetwork(Integer.parseInt(msg.substring(7)));
     sendMessage(msg, endpointId);
   }
@@ -109,7 +105,7 @@ public class MainActivity extends AppCompatActivity {
   /*
   Handles connecting two networks together
    */
-  private void handleMsg2(String msg, String endpointId) {
+  private void handleMsg2(String msg, String endpointId) throws IOException {
     int disEmpty = Integer.parseInt(msg.substring(7,8));
     int adEmpty = Integer.parseInt(msg.substring(8,9));
     if (disEmpty == 0 || discoverer.isAssigned()) {
@@ -152,7 +148,6 @@ public class MainActivity extends AppCompatActivity {
         sendNumInNetwork(endpointId);
       }
     }
-    endpoints.add(endpointId);
   }
 
   // Callbacks for receiving payloads
@@ -163,7 +158,8 @@ public class MainActivity extends AppCompatActivity {
               try {
                 Object deserialized = SerializationHelper.deserialize(payload.asBytes());
                 if (deserialized instanceof String) {
-                  String msg = new String(payload.asBytes(), UTF_8);
+//                  String msg = new String(payload.asBytes(), UTF_8);
+                  String msg = (String) deserialized;
                   Log.d(TAG, msg);
                   if (msg.startsWith("MSG 0: ")) {
                     handleMsg0(msg);
@@ -201,7 +197,7 @@ public class MainActivity extends AppCompatActivity {
       new EndpointDiscoveryCallback() {
         @Override
         public void onEndpointFound(String endpointId, DiscoveredEndpointInfo info) {
-          if (!(discoveredSet.contains(endpointId) || advertisedSet.contains(endpointId) || info.getEndpointName().equals(codeName))) {
+          if (!(discoverer.contains(endpointId) || advertiser.contains(endpointId) || info.getEndpointName().equals(codeName))) {
             Log.i(TAG, "onEndpointFound: endpoint found, connecting");
             connectionsClient.requestConnection(codeName, endpointId, connectionLifecycleCallback);
           }
@@ -228,7 +224,11 @@ public class MainActivity extends AppCompatActivity {
           if (result.getStatus().isSuccess()) {
             Log.i(TAG, "onConnectionResult: connection successful");
 
-            sendConnectInfo(endpointId);
+            try {
+              sendConnectInfo(endpointId);
+            } catch (IOException e) {
+              e.printStackTrace();
+            }
 
 
           } else {
@@ -247,12 +247,20 @@ public class MainActivity extends AppCompatActivity {
           numInNetwork = 1;
           if (discoverer.isSameId(endpointId)) {
             discoverer.clear();
-            sendNumInNetwork(advertiser.getId());
+            try {
+              sendNumInNetwork(advertiser.getId());
+            } catch (IOException e) {
+              e.printStackTrace();
+            }
             startDiscovery();
           }
           if (advertiser.isSameId(endpointId)) {
             advertiser.clear();
-            sendNumInNetwork(discoverer.getId());
+            try {
+              sendNumInNetwork(discoverer.getId());
+            } catch (IOException e) {
+              e.printStackTrace();
+            }
             startAdvertising();
           }
           Log.i(TAG, "onDisconnected: disconnected from network");
@@ -264,6 +272,9 @@ public class MainActivity extends AppCompatActivity {
   protected void onCreate(@Nullable Bundle bundle) {
     super.onCreate(bundle);
     setContentView(R.layout.activity_main);
+
+    discoverer = new Node("discoverer");
+    advertiser = new Node("advertiser");
 
     sendMessageButton = findViewById(R.id.sendMessageButton);
     deviceNameText = findViewById(R.id.deviceName);
@@ -277,7 +288,11 @@ public class MainActivity extends AppCompatActivity {
     sendMessageButton.setOnClickListener(new View.OnClickListener() {
       @Override
       public void onClick(View view) {
-        sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
+        try {
+          sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
       }
     });
 
@@ -352,18 +367,18 @@ public class MainActivity extends AppCompatActivity {
   }
 
 
-  /** Sends the user's selection of rock, paper, or scissors to the opponent. */
-  private void sendMessage(String message, String ignoreId) {
+  /** Sends the message through the network*/
+  private void sendMessage(String message, String ignoreId) throws IOException {
     Log.d(TAG,String.format("name: %s, discoverer id: %s, advertiser id: %s, ignore id: %s",codeName,discoverer.getId(),advertiser.getId(),ignoreId));
      if (advertiser.isAssigned() && !advertiser.isSameId(ignoreId)) {
        Log.d(TAG,"Sending message to the advertiser");
        connectionsClient.sendPayload(
-               advertiser.getId(), Payload.fromBytes(message.getBytes(UTF_8)));
+               advertiser.getId(), Payload.fromBytes(SerializationHelper.serialize(message)));
      }
     if (discoverer.isAssigned() && !discoverer.isSameId(ignoreId)) {
       Log.d(TAG,"Sending message to the discoverer");
       connectionsClient.sendPayload(
-              discoverer.getId(), Payload.fromBytes(message.getBytes(UTF_8)));
+              discoverer.getId(), Payload.fromBytes(SerializationHelper.serialize(message)));
     }
 
     if (!message.startsWith("MSG")) {
@@ -376,17 +391,17 @@ public class MainActivity extends AppCompatActivity {
     lastMessage.setText(message);
   }
 
-  private void sendNumInNetwork(String endpointId) {
+  private void sendNumInNetwork(String endpointId) throws IOException {
     Log.d(TAG,"Sending number of nodes in network...");
     String msg = "MSG 0: " + numInNetwork;
-    connectionsClient.sendPayload(endpointId,Payload.fromBytes(msg.getBytes(UTF_8)));
+    connectionsClient.sendPayload(endpointId,Payload.fromBytes(SerializationHelper.serialize(msg)));
 
   }
 
-  private void sendConnectInfo(String endpointId) {
+  private void sendConnectInfo(String endpointId) throws IOException {
     Log.d(TAG,"Sending info about current endpoints...");
     String msg = String.format("MSG 2: %d%d%s",discoverer.isAssigned()? 0 : 1, advertiser.isAssigned()? 0: 1,codeName);
-    connectionsClient.sendPayload(endpointId,Payload.fromBytes(msg.getBytes(UTF_8)));
+    connectionsClient.sendPayload(endpointId,Payload.fromBytes(SerializationHelper.serialize(msg)));
 
   }
 
