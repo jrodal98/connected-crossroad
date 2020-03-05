@@ -22,8 +22,9 @@ public class Node {
         endpoints.add(id);
     }
 
-    public boolean mergeEndpoints(HashSet<String> ids) {
-        return endpoints.addAll(ids);
+    public void setEndpoints(HashSet<String> ids) {
+        this.endpoints = ids;
+        ids.add(this.id);
     }
 
     public boolean isSameId(String id) {
@@ -35,17 +36,22 @@ public class Node {
     }
 
     public boolean isAssigned() {
-        return !type.isEmpty();
+        return !id.isEmpty();
     }
 
     public boolean contains(String id) {
         return endpoints.contains(id);
     }
 
+    public HashSet<String> getEndpoints() {
+        return endpoints;
+    }
 
+    public String getType() {
+        return type;
+    }
 
     public void clear() {
-        type = "";
         id = "";
         endpoints = new HashSet<>();
     }

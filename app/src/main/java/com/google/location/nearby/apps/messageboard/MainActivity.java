@@ -1,7 +1,5 @@
 package com.google.location.nearby.apps.messageboard;
 
-import static java.nio.charset.StandardCharsets.UTF_8;
-
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -72,9 +70,8 @@ public class MainActivity extends AppCompatActivity {
   // Our randomly generated name
   private final String codeName = CodenameGenerator.generate();
 
-  private Node discoverer;
-  private Node advertiser;
-  private int numInNetwork = 1;
+  private Node advertisedTo;
+  private Node discoveredFrom;
   private Button sendMessageButton;
 
   private TextView numConnectedText;
@@ -82,71 +79,46 @@ public class MainActivity extends AppCompatActivity {
   private TextView lastMessage;
   private EditText sendMessageText;
 
-  /*
-  Sent when a discoverer and an advertiser first connect
-  The idea is as follows: Two nodes connecting essentially connects two networks together.
-  To determine the size of the combined network, one must simply add the size of the two
-  smaller networks together. msg0 contains the size of one of the networks, and then the other
-  network determines the total size of the new network. Then, that size is propogated to all
-  other nodes in the network via the MSG 1
-   */
-  private void handleMsg0(String msg) throws IOException {
-    setNumInNetwork(numInNetwork + Integer.parseInt(msg.substring(7)));
-    msg = "MSG 1: " + numInNetwork;
-    sendMessage(msg, "");
+
+  private void setDiscoveredFrom(String endpointId) throws IOException {
+    discoveredFrom.setId(endpointId);
+    sendNodesInNetwork(advertisedTo, discoveredFrom);
+    Log.d(TAG,"Stopping discovery");
+    connectionsClient.stopDiscovery();
   }
 
-  // propagates a network size through the network
-  private void handleMsg1(String msg, String endpointId) throws IOException {
-    setNumInNetwork(Integer.parseInt(msg.substring(7)));
-    sendMessage(msg, endpointId);
+  private void setAdvertisedTo(String endpointId) throws IOException {
+    advertisedTo.setId(endpointId);
+    sendNodesInNetwork(discoveredFrom, advertisedTo);
+    Log.d(TAG, "Stopping advertising");
+    connectionsClient.stopAdvertising();
   }
-
   /*
   Handles connecting two networks together
    */
   private void handleMsg2(String msg, String endpointId) throws IOException {
-    int disEmpty = Integer.parseInt(msg.substring(7,8));
-    int adEmpty = Integer.parseInt(msg.substring(8,9));
-    if (disEmpty == 0 || discoverer.isAssigned()) {
-      advertiser.setId(endpointId);
-      Log.d(TAG,"Stopping discovery");
-      connectionsClient.stopDiscovery();
+    boolean otherNodeAdAssigned = Integer.parseInt(msg.substring(7,8)) == 1;
+    boolean otherNodeDisAssigned = Integer.parseInt(msg.substring(8,9)) == 1;
+    // if we have not discoverered and the other node has discovered and hasn't advertised
+    if (!discoveredFrom.isAssigned() && otherNodeDisAssigned && !otherNodeAdAssigned) {
+        setDiscoveredFrom(endpointId);
     }
-
-    else if (adEmpty == 0 || advertiser.isAssigned()) {
-      discoverer.setId(endpointId);
-      Log.d(TAG, "Stopping advertising");
-      if (numInNetwork == 1) {
-        connectionsClient.stopDiscovery();
-        // TODO: this is a temporary hacky fix for preventing a cycle in my network
-        // I think this solution would work in theory only if one giant network was formed
-        // if two smaller networks are formed, they wouldn't be able to connect to each other
-        // Look into echoing a message and then disconnecting if necessary.
-      }
-      connectionsClient.stopAdvertising();
-      sendNumInNetwork(endpointId);
+    // if we have not advertised and the other node has advertised and hasn't discoverered
+    else if (!advertisedTo.isAssigned() && otherNodeAdAssigned && !otherNodeDisAssigned){
+      setAdvertisedTo(endpointId);
     }
-    else {
+    else if ((!otherNodeDisAssigned && !discoveredFrom.isAssigned()) && (!otherNodeAdAssigned && !advertisedTo.isAssigned())) {
+      Log.d(TAG, "handleMsg2: Both devices can register as advertisers or discoverers");
       String name = msg.substring(9);
       if (name.compareTo(codeName) < 0) {
-        advertiser.setId(endpointId);
-        Log.d(TAG,"Stopping discovery");
-        connectionsClient.stopDiscovery();
+        setDiscoveredFrom(endpointId);
       }
       else {
-        discoverer.setId(endpointId);
-        Log.d(TAG, "Stopping advertising");
-        if (numInNetwork == 1) {
-          connectionsClient.stopDiscovery();
-          // TODO: this is a temporary hacky fix for preventing a cycle in my network
-          // I think this solution would work in theory only if one giant network was formed
-          // if two smaller networks are formed, they wouldn't be able to connect to each other
-          // Look into echoing a message and then disconnecting if necessary.
-        }
-        connectionsClient.stopAdvertising();
-        sendNumInNetwork(endpointId);
+        setAdvertisedTo(endpointId);
       }
+    }
+    else {
+      Log.d(TAG, "handleMsg2: Couldn't properly handle who should become an advertiser and who should become a discoverer :(");
     }
   }
 
@@ -158,25 +130,34 @@ public class MainActivity extends AppCompatActivity {
               try {
                 Object deserialized = SerializationHelper.deserialize(payload.asBytes());
                 if (deserialized instanceof String) {
-//                  String msg = new String(payload.asBytes(), UTF_8);
                   String msg = (String) deserialized;
                   Log.d(TAG, msg);
-                  if (msg.startsWith("MSG 0: ")) {
-                    handleMsg0(msg);
-                  } else if (msg.startsWith("MSG 1: ")) {
-                    handleMsg1(msg, endpointId);
-                  } else if (msg.startsWith("MSG 2: ")) {
+                  if (msg.startsWith("MSG 2: ")) {
                     handleMsg2(msg, endpointId);
                   } else {
-                    sendMessage(msg, endpointId);
+                      if (msg.startsWith(codeName)) {
+                        Log.d(TAG, "onPayloadReceived: CYCLE DETECTED :(");
+                      }
+                      else {
+                        sendMessage(msg, endpointId);
+                      }
                   }
                 } else {
                   HashSet<String> ids = (HashSet<String>) deserialized;
-                  if (discoverer.isSameId(endpointId)) {
-                    discoverer.mergeEndpoints(ids);
+                  if (advertisedTo.isSameId(endpointId)) {
+                    advertisedTo.setEndpoints(ids);
+                    setNumInNetwork();
+                    if (discoveredFrom.isAssigned()) {
+                      sendNodesInNetwork(advertisedTo, discoveredFrom);
+                    }
+
                   }
-                  else if (advertiser.isSameId(endpointId)) {
-                      advertiser.mergeEndpoints(ids);
+                  else if (discoveredFrom.isSameId(endpointId)) {
+                      discoveredFrom.setEndpoints(ids);
+                      setNumInNetwork();
+                      if (advertisedTo.isAssigned()) {
+                        sendNodesInNetwork(discoveredFrom, advertisedTo);
+                      }
                   }
                 }
               } catch (IOException | ClassNotFoundException e) {
@@ -197,7 +178,7 @@ public class MainActivity extends AppCompatActivity {
       new EndpointDiscoveryCallback() {
         @Override
         public void onEndpointFound(String endpointId, DiscoveredEndpointInfo info) {
-          if (!(discoverer.contains(endpointId) || advertiser.contains(endpointId) || info.getEndpointName().equals(codeName))) {
+          if (!(advertisedTo.contains(endpointId) || discoveredFrom.contains(endpointId) || info.getEndpointName().equals(codeName))) {
             Log.i(TAG, "onEndpointFound: endpoint found, connecting");
             connectionsClient.requestConnection(codeName, endpointId, connectionLifecycleCallback);
           }
@@ -232,32 +213,34 @@ public class MainActivity extends AppCompatActivity {
 
 
           } else {
-            if (discoverer.isSameId(endpointId)) {
-              discoverer.clear();
+            if (advertisedTo.isSameId(endpointId)) {
+              advertisedTo.clear();
             }
-            if (advertiser.isSameId(endpointId)) {
-              advertiser.clear();
+            if (discoveredFrom.isSameId(endpointId)) {
+              discoveredFrom.clear();
             }
             Log.i(TAG, "onConnectionResult: connection failed");
           }
         }
 
+        // still needs to be implemented properly! this is just boiler plate that 100% doesn't work
         @Override
         public void onDisconnected(String endpointId) {
-          numInNetwork = 1;
-          if (discoverer.isSameId(endpointId)) {
-            discoverer.clear();
+          if (advertisedTo.isSameId(endpointId)) {
+            advertisedTo.clear();
             try {
-              sendNumInNetwork(advertiser.getId());
+              setNumInNetwork();
+              sendNodesInNetwork(advertisedTo, discoveredFrom);
             } catch (IOException e) {
               e.printStackTrace();
             }
             startDiscovery();
           }
-          if (advertiser.isSameId(endpointId)) {
-            advertiser.clear();
+          if (discoveredFrom.isSameId(endpointId)) {
+            discoveredFrom.clear();
             try {
-              sendNumInNetwork(discoverer.getId());
+              setNumInNetwork();
+              sendNodesInNetwork(advertisedTo, discoveredFrom);
             } catch (IOException e) {
               e.printStackTrace();
             }
@@ -273,8 +256,8 @@ public class MainActivity extends AppCompatActivity {
     super.onCreate(bundle);
     setContentView(R.layout.activity_main);
 
-    discoverer = new Node("discoverer");
-    advertiser = new Node("advertiser");
+    advertisedTo = new Node("discoverer");
+    discoveredFrom = new Node("advertiser");
 
     sendMessageButton = findViewById(R.id.sendMessageButton);
     deviceNameText = findViewById(R.id.deviceName);
@@ -369,16 +352,16 @@ public class MainActivity extends AppCompatActivity {
 
   /** Sends the message through the network*/
   private void sendMessage(String message, String ignoreId) throws IOException {
-    Log.d(TAG,String.format("name: %s, discoverer id: %s, advertiser id: %s, ignore id: %s",codeName,discoverer.getId(),advertiser.getId(),ignoreId));
-     if (advertiser.isAssigned() && !advertiser.isSameId(ignoreId)) {
+    Log.d(TAG,String.format("name: %s, discoverer id: %s, advertiser id: %s, ignore id: %s",codeName, advertisedTo.getId(), discoveredFrom.getId(),ignoreId));
+     if (discoveredFrom.isAssigned() && !discoveredFrom.isSameId(ignoreId)) {
        Log.d(TAG,"Sending message to the advertiser");
        connectionsClient.sendPayload(
-               advertiser.getId(), Payload.fromBytes(SerializationHelper.serialize(message)));
+               discoveredFrom.getId(), Payload.fromBytes(SerializationHelper.serialize(message)));
      }
-    if (discoverer.isAssigned() && !discoverer.isSameId(ignoreId)) {
+    if (advertisedTo.isAssigned() && !advertisedTo.isSameId(ignoreId)) {
       Log.d(TAG,"Sending message to the discoverer");
       connectionsClient.sendPayload(
-              discoverer.getId(), Payload.fromBytes(SerializationHelper.serialize(message)));
+              advertisedTo.getId(), Payload.fromBytes(SerializationHelper.serialize(message)));
     }
 
     if (!message.startsWith("MSG")) {
@@ -387,26 +370,23 @@ public class MainActivity extends AppCompatActivity {
     }
   }
 
-  private void setLastMessage(String message) {
-    lastMessage.setText(message);
-  }
-
-  private void sendNumInNetwork(String endpointId) throws IOException {
-    Log.d(TAG,"Sending number of nodes in network...");
-    String msg = "MSG 0: " + numInNetwork;
-    connectionsClient.sendPayload(endpointId,Payload.fromBytes(SerializationHelper.serialize(msg)));
+  private void sendNodesInNetwork(Node nodeFrom, Node nodeTo) throws IOException {
+    Log.d(TAG,String.format("Sending nodes connected from %s to %s", nodeFrom.getType(), nodeTo.getType()));
+    connectionsClient.sendPayload(nodeTo.getId(),Payload.fromBytes(SerializationHelper.serialize(nodeFrom.getEndpoints())));
 
   }
 
+  // need to do some sort of wait such that only one makes the decision
+  // don't send the information one the second one until the first one makes its decision
   private void sendConnectInfo(String endpointId) throws IOException {
     Log.d(TAG,"Sending info about current endpoints...");
-    String msg = String.format("MSG 2: %d%d%s",discoverer.isAssigned()? 0 : 1, advertiser.isAssigned()? 0: 1,codeName);
+    String msg = String.format("MSG 2: %d%d%s", advertisedTo.isAssigned()? 1 : 0, discoveredFrom.isAssigned()? 1: 0,codeName);
     connectionsClient.sendPayload(endpointId,Payload.fromBytes(SerializationHelper.serialize(msg)));
 
   }
 
-  private void setNumInNetwork(int num) {
-    numInNetwork = num;
+  private void setNumInNetwork() {
+    int numInNetwork = discoveredFrom.getSize() + advertisedTo.getSize() + 1;
       numConnectedText.setText(String.format("Devices in network: %d",numInNetwork));
   }
 }
