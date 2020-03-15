@@ -70,8 +70,7 @@ public class MainActivity extends AppCompatActivity {
   // Our randomly generated name
   private final String codeName = CodenameGenerator.generate();
 
-  private Node advertisedTo;
-  private Node discoveredFrom;
+  private Network network;
   private Button sendMessageButton;
 
   private TextView numConnectedText;
@@ -80,47 +79,6 @@ public class MainActivity extends AppCompatActivity {
   private EditText sendMessageText;
 
 
-  private void setDiscoveredFrom(String endpointId) throws IOException {
-    discoveredFrom.setId(endpointId);
-    sendNodesInNetwork(advertisedTo, discoveredFrom);
-    Log.d(TAG,"Stopping discovery");
-    connectionsClient.stopDiscovery();
-  }
-
-  private void setAdvertisedTo(String endpointId) throws IOException {
-    advertisedTo.setId(endpointId);
-    sendNodesInNetwork(discoveredFrom, advertisedTo);
-    Log.d(TAG, "Stopping advertising");
-    connectionsClient.stopAdvertising();
-  }
-  /*
-  Handles connecting two networks together
-   */
-  private void handleMsg2(String msg, String endpointId) throws IOException {
-    boolean otherNodeAdAssigned = Integer.parseInt(msg.substring(7,8)) == 1;
-    boolean otherNodeDisAssigned = Integer.parseInt(msg.substring(8,9)) == 1;
-    // if we have not discoverered and the other node has discovered and hasn't advertised
-    if (!discoveredFrom.isAssigned() && otherNodeDisAssigned && !otherNodeAdAssigned) {
-        setDiscoveredFrom(endpointId);
-    }
-    // if we have not advertised and the other node has advertised and hasn't discoverered
-    else if (!advertisedTo.isAssigned() && otherNodeAdAssigned && !otherNodeDisAssigned){
-      setAdvertisedTo(endpointId);
-    }
-    else if ((!otherNodeDisAssigned && !discoveredFrom.isAssigned()) && (!otherNodeAdAssigned && !advertisedTo.isAssigned())) {
-      Log.d(TAG, "handleMsg2: Both devices can register as advertisers or discoverers");
-      String name = msg.substring(9);
-      if (name.compareTo(codeName) < 0) {
-        setDiscoveredFrom(endpointId);
-      }
-      else {
-        setAdvertisedTo(endpointId);
-      }
-    }
-    else {
-      Log.d(TAG, "handleMsg2: Couldn't properly handle who should become an advertiser and who should become a discoverer :(");
-    }
-  }
 
   // Callbacks for receiving payloads
   private final PayloadCallback payloadCallback =
@@ -132,34 +90,17 @@ public class MainActivity extends AppCompatActivity {
                 if (deserialized instanceof String) {
                   String msg = (String) deserialized;
                   Log.d(TAG, msg);
-                  if (msg.startsWith("MSG 2: ")) {
-                    handleMsg2(msg, endpointId);
-                  } else {
                       if (msg.startsWith(codeName)) {
                         Log.d(TAG, "onPayloadReceived: CYCLE DETECTED :(");
                       }
                       else {
-                        sendMessage(msg, endpointId);
+                          sendMessage(msg,endpointId);
                       }
-                  }
                 } else {
                   HashSet<String> ids = (HashSet<String>) deserialized;
-                  if (advertisedTo.isSameId(endpointId)) {
-                    advertisedTo.setEndpoints(ids);
-                    setNumInNetwork();
-                    if (discoveredFrom.isAssigned()) {
-                      sendNodesInNetwork(advertisedTo, discoveredFrom);
-                    }
-
+                  network.setEndpoints(endpointId, ids);
+                  setNumInNetwork();
                   }
-                  else if (discoveredFrom.isSameId(endpointId)) {
-                      discoveredFrom.setEndpoints(ids);
-                      setNumInNetwork();
-                      if (advertisedTo.isAssigned()) {
-                        sendNodesInNetwork(discoveredFrom, advertisedTo);
-                      }
-                  }
-                }
               } catch (IOException | ClassNotFoundException e) {
                 e.printStackTrace();
               }
@@ -178,7 +119,7 @@ public class MainActivity extends AppCompatActivity {
       new EndpointDiscoveryCallback() {
         @Override
         public void onEndpointFound(String endpointId, DiscoveredEndpointInfo info) {
-          if (!(advertisedTo.contains(endpointId) || discoveredFrom.contains(endpointId) || info.getEndpointName().equals(codeName))) {
+          if (!(network.contains(endpointId) || info.getEndpointName().equals(codeName))) {
             Log.i(TAG, "onEndpointFound: endpoint found, connecting");
             connectionsClient.requestConnection(codeName, endpointId, connectionLifecycleCallback);
           }
@@ -205,47 +146,31 @@ public class MainActivity extends AppCompatActivity {
           if (result.getStatus().isSuccess()) {
             Log.i(TAG, "onConnectionResult: connection successful");
 
-            try {
-              sendConnectInfo(endpointId);
-            } catch (IOException e) {
-              e.printStackTrace();
-            }
+              try {
+                  if (network.addNode(endpointId)) {
+                    Log.d(TAG, String.format("onConnectionResult: %s added to network", endpointId));
+                  }
+                  else {
+                    Log.d(TAG, String.format("onConnectionResult: could not add %s to network."));
+                  }
+              } catch (IOException e) {
+                  e.printStackTrace();
+              }
 
 
           } else {
-            if (advertisedTo.isSameId(endpointId)) {
-              advertisedTo.clear();
-            }
-            if (discoveredFrom.isSameId(endpointId)) {
-              discoveredFrom.clear();
-            }
+              if (network.remove(endpointId)) {
+                Log.d(TAG, String.format("OnConnectionResult: Removing %s from network.", endpointId));
+              }
+              else {
+                Log.d(TAG, String.format("OnConnectionResult: Failed to remove %s from network.", endpointId));
+              }
             Log.i(TAG, "onConnectionResult: connection failed");
           }
         }
 
-        // still needs to be implemented properly! this is just boiler plate that 100% doesn't work
         @Override
         public void onDisconnected(String endpointId) {
-          if (advertisedTo.isSameId(endpointId)) {
-            advertisedTo.clear();
-            try {
-              setNumInNetwork();
-              sendNodesInNetwork(advertisedTo, discoveredFrom);
-            } catch (IOException e) {
-              e.printStackTrace();
-            }
-            startDiscovery();
-          }
-          if (discoveredFrom.isSameId(endpointId)) {
-            discoveredFrom.clear();
-            try {
-              setNumInNetwork();
-              sendNodesInNetwork(advertisedTo, discoveredFrom);
-            } catch (IOException e) {
-              e.printStackTrace();
-            }
-            startAdvertising();
-          }
           Log.i(TAG, "onDisconnected: disconnected from network");
         }
       };
@@ -255,9 +180,6 @@ public class MainActivity extends AppCompatActivity {
   protected void onCreate(@Nullable Bundle bundle) {
     super.onCreate(bundle);
     setContentView(R.layout.activity_main);
-
-    advertisedTo = new Node("discoverer");
-    discoveredFrom = new Node("advertiser");
 
     sendMessageButton = findViewById(R.id.sendMessageButton);
     deviceNameText = findViewById(R.id.deviceName);
@@ -272,7 +194,7 @@ public class MainActivity extends AppCompatActivity {
       @Override
       public void onClick(View view) {
         try {
-          sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
+            sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
         } catch (IOException e) {
           e.printStackTrace();
         }
@@ -280,6 +202,7 @@ public class MainActivity extends AppCompatActivity {
     });
 
     connectionsClient = Nearby.getConnectionsClient(this);
+    network = new Network(codeName, connectionsClient);
     startAdvertising();
     startDiscovery();
   }
@@ -350,43 +273,15 @@ public class MainActivity extends AppCompatActivity {
   }
 
 
-  /** Sends the message through the network*/
-  private void sendMessage(String message, String ignoreId) throws IOException {
-    Log.d(TAG,String.format("name: %s, discoverer id: %s, advertiser id: %s, ignore id: %s",codeName, advertisedTo.getId(), discoveredFrom.getId(),ignoreId));
-     if (discoveredFrom.isAssigned() && !discoveredFrom.isSameId(ignoreId)) {
-       Log.d(TAG,"Sending message to the advertiser");
-       connectionsClient.sendPayload(
-               discoveredFrom.getId(), Payload.fromBytes(SerializationHelper.serialize(message)));
-     }
-    if (advertisedTo.isAssigned() && !advertisedTo.isSameId(ignoreId)) {
-      Log.d(TAG,"Sending message to the discoverer");
-      connectionsClient.sendPayload(
-              advertisedTo.getId(), Payload.fromBytes(SerializationHelper.serialize(message)));
-    }
-
-    if (!message.startsWith("MSG")) {
-      Log.d(TAG,"setting message board");
-      lastMessage.setText(message);
-    }
-  }
-
-  private void sendNodesInNetwork(Node nodeFrom, Node nodeTo) throws IOException {
-    Log.d(TAG,String.format("Sending nodes connected from %s to %s", nodeFrom.getType(), nodeTo.getType()));
-    connectionsClient.sendPayload(nodeTo.getId(),Payload.fromBytes(SerializationHelper.serialize(nodeFrom.getEndpoints())));
-
-  }
-
-  // need to do some sort of wait such that only one makes the decision
-  // don't send the information one the second one until the first one makes its decision
-  private void sendConnectInfo(String endpointId) throws IOException {
-    Log.d(TAG,"Sending info about current endpoints...");
-    String msg = String.format("MSG 2: %d%d%s", advertisedTo.isAssigned()? 1 : 0, discoveredFrom.isAssigned()? 1: 0,codeName);
-    connectionsClient.sendPayload(endpointId,Payload.fromBytes(SerializationHelper.serialize(msg)));
-
-  }
 
   private void setNumInNetwork() {
-    int numInNetwork = discoveredFrom.getSize() + advertisedTo.getSize() + 1;
+    int numInNetwork = network.getSize();
       numConnectedText.setText(String.format("Devices in network: %d",numInNetwork));
+  }
+
+  private void sendMessage(String msg, String ignoreId) throws IOException {
+      network.sendMessage(msg, ignoreId);
+      Log.d(TAG,"setting message board");
+      lastMessage.setText(msg);
   }
 }

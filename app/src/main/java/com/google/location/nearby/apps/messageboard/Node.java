@@ -3,12 +3,10 @@ package com.google.location.nearby.apps.messageboard;
 import java.util.HashSet;
 
 public class Node {
-    private String type;
     private String id;
     private HashSet<String> endpoints;
 
-    public Node(String type) {
-        this.type = type;
+    public Node() {
         id = "";
         endpoints = new HashSet<>();
     }
@@ -27,12 +25,12 @@ public class Node {
         ids.add(this.id);
     }
 
-    public boolean isSameId(String id) {
-        return this.id.equals(id);
-    }
-
     public String getId() {
         return id;
+    }
+
+    public boolean is(String id) {
+        return this.id.equals(id);
     }
 
     public boolean isAssigned() {
@@ -47,12 +45,9 @@ public class Node {
         return endpoints;
     }
 
-    public String getType() {
-        return type;
-    }
-
     public void clear() {
         id = "";
         endpoints = new HashSet<>();
     }
 }
+
