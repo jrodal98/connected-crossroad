@@ -91,9 +91,11 @@ public class MainActivity extends AppCompatActivity {
                   String msg = (String) deserialized;
                   Log.d(TAG, msg);
                       if (msg.startsWith(codeName)) {
-                        Log.d(TAG, "onPayloadReceived: CYCLE DETECTED :(");
+                        Log.d(TAG, "onPayloadReceived: CYCLE DETECTED...");
+//                        network.remove(endpointId);
                       }
                       else {
+                          Log.d(TAG, "onPayloadReceived: Forwarding message");
                           sendMessage(msg,endpointId);
                       }
                 } else {
@@ -137,8 +139,13 @@ public class MainActivity extends AppCompatActivity {
       new ConnectionLifecycleCallback() {
         @Override
         public void onConnectionInitiated(String endpointId, ConnectionInfo connectionInfo) {
-              Log.i(TAG, "onConnectionInitiated: accepting connection");
-              connectionsClient.acceptConnection(endpointId, payloadCallback);
+            if (network.contains(endpointId)) {
+                Log.i(TAG, "onConnectionInitiated: prevented cycle");
+            }
+            else {
+                Log.i(TAG, "onConnectionInitiated: accepting connection");
+                connectionsClient.acceptConnection(endpointId, payloadCallback);
+            }
           }
 
         @Override
@@ -147,7 +154,12 @@ public class MainActivity extends AppCompatActivity {
             Log.i(TAG, "onConnectionResult: connection successful");
 
               try {
-                  if (network.addNode(endpointId)) {
+                    if (network.contains(endpointId)) {
+                        Log.i(TAG, "onConnectionResult: prevented cycle");
+                        connectionsClient.disconnectFromEndpoint(endpointId);
+                    }
+                  else if (network.addNode(endpointId)) {
+                    setNumInNetwork();
                     Log.d(TAG, String.format("onConnectionResult: %s added to network", endpointId));
                   }
                   else {
@@ -277,6 +289,7 @@ public class MainActivity extends AppCompatActivity {
   private void setNumInNetwork() {
     int numInNetwork = network.getSize();
       numConnectedText.setText(String.format("Devices in network: %d",numInNetwork));
+      Log.d(TAG, String.format("Devices in network: %d",numInNetwork));
   }
 
   private void sendMessage(String msg, String ignoreId) throws IOException {

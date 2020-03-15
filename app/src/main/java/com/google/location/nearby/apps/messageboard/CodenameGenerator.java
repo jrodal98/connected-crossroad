@@ -49,6 +49,7 @@ public final class CodenameGenerator {
   public static String generate() {
     String color = COLORS[generator.nextInt(COLORS.length)];
     String treat = TREATS[generator.nextInt(TREATS.length)];
-    return color + " " + treat;
+    int num = generator.nextInt();
+    return color + " " + treat + " #" + num;
   }
 }

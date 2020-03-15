@@ -29,14 +29,14 @@ public class Network {
     public boolean addNode(String id) throws IOException {
         if (!n1.isAssigned()) {
             n1.setId(id);
-            sendNodesInNetwork(n1,n2);
+            sendNodesInNetwork(n2,n1);
         }
         else if (!n2.isAssigned()) {
             n2.setId(id);
             connectionsClient.stopAdvertising();
             connectionsClient.stopDiscovery();
             Log.d(TAG, "Stopping advertising and discovery");
-            sendNodesInNetwork(n2,n1);
+            sendNodesInNetwork(n1,n2);
         }
         else {
             return false;
@@ -49,6 +49,7 @@ public class Network {
     }
 
 
+    // Need to resume advertisement and discovery
     public boolean remove(String id) {
         if (n1.is(id)) {
             n1.clear();
@@ -74,11 +75,6 @@ public class Network {
         return n2.getId();
     }
 
-//    String otherId = network.setEndpoints(endpointId, ids);
-//    setNumInNetwork();
-//                  if (!otherId.isEmpty()) {
-//        sendNodesInNetwork(endpointId, otherId);
-//    }
     public boolean setEndpoints(String id, HashSet<String> ids) throws IOException {
         Log.d(TAG, String.format("Setting and sending endpoints for %s", id));
         if (n1.is(id)) {
@@ -117,4 +113,52 @@ public class Network {
 
     }
 
+}
+class Node {
+    private String id;
+    private HashSet<String> endpoints;
+
+    public Node() {
+        id = "";
+        endpoints = new HashSet<>();
+    }
+
+    public int getSize() {
+        return endpoints.size();
+    }
+
+    public void setId(String id) {
+        this.id = id;
+        endpoints.add(id);
+    }
+
+    public void setEndpoints(HashSet<String> ids) {
+        this.endpoints = ids;
+        ids.add(this.id);
+    }
+
+    public String getId() {
+        return id;
+    }
+
+    public boolean is(String id) {
+        return this.id.equals(id);
+    }
+
+    public boolean isAssigned() {
+        return !id.isEmpty();
+    }
+
+    public boolean contains(String id) {
+        return endpoints.contains(id);
+    }
+
+    public HashSet<String> getEndpoints() {
+        return endpoints;
+    }
+
+    public void clear() {
+        id = "";
+        endpoints = new HashSet<>();
+    }
 }
