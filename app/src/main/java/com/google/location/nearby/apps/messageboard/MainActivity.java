@@ -1,7 +1,5 @@
 package com.google.location.nearby.apps.messageboard;
 
-import static java.nio.charset.StandardCharsets.UTF_8;
-
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -32,16 +30,9 @@ import com.google.android.gms.nearby.connection.PayloadTransferUpdate;
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate.Status;
 import com.google.android.gms.nearby.connection.Strategy;
 
-import java.util.ArrayList;
+import java.io.IOException;
+import java.util.HashSet;
 
-/*
-
-TODO:
-
-1) Have sample app show names of the connected devices in some sort of list view
-2) automatically search and connect to other devices
-  - follow my advertiser/discoverer strategy I wrote up
- */
 
 /** Activity controlling the Message Board */
 public class MainActivity extends AppCompatActivity {
@@ -68,10 +59,7 @@ public class MainActivity extends AppCompatActivity {
   // Our randomly generated name
   private final String codeName = CodenameGenerator.generate();
 
-  private ArrayList<String> endpointIds = new ArrayList<>();
-  private String discovererId = "";
-  private String advertiserId = "";
-  private int numInNetwork = 1;
+  private Network network;
   private Button sendMessageButton;
 
   private TextView numConnectedText;
@@ -79,87 +67,52 @@ public class MainActivity extends AppCompatActivity {
   private TextView lastMessage;
   private EditText sendMessageText;
 
+
+
   // Callbacks for receiving payloads
   private final PayloadCallback payloadCallback =
-      new PayloadCallback() {
-        @Override
-        public void onPayloadReceived(String endpointId, Payload payload) {
-            String msg = new String(payload.asBytes(), UTF_8);
-            Log.d(TAG,msg);
-            if (msg.startsWith("MSG 0: ")) {
-              numInNetwork += Integer.parseInt(msg.substring(7));
-              setNumInNetwork();
-              msg = "MSG 1: " + numInNetwork;
-              sendMessage(msg, "");
-            }
-            else if (msg.startsWith("MSG 1: ")){
-              numInNetwork = Integer.parseInt(msg.substring(7));
-              setNumInNetwork();
-              sendMessage(msg, endpointId);
-            }
-            else if (msg.startsWith("MSG 2: ")) {
-              int disEmpty = Integer.parseInt(msg.substring(7,8));
-              int adEmpty = Integer.parseInt(msg.substring(8,9));
-              if (disEmpty == 0 || !discovererId.equals("")) {
-                advertiserId = endpointId;
-                Log.d(TAG,"Stopping discovery");
-                connectionsClient.stopDiscovery();
-              }
-
-              else if (adEmpty == 0 || !advertiserId.equals("")) {
-                discovererId = endpointId;
-                Log.d(TAG, "Stopping advertising");
-                if (numInNetwork == 1) {
-                  connectionsClient.stopDiscovery();
-                  // TODO: this is a temporary hacky fix for preventing a cycle in my network
-                  // I think this solution would work in theory only if one giant network was formed
-                  // if two smaller networks are formed, they wouldn't be able to connect to each other
-                  // Look into echoing a message and then disconnecting if necessary.
-                }
-                connectionsClient.stopAdvertising();
-                sendNumInNetwork(endpointId);
-              }
-              else {
-                String name = msg.substring(9);
-                if (name.compareTo(codeName) < 0) {
-                  advertiserId = endpointId;
-                  Log.d(TAG,"Stopping discovery");
-                  connectionsClient.stopDiscovery();
-                }
-                else {
-                  discovererId = endpointId;
-                  Log.d(TAG, "Stopping advertising");
-                  if (numInNetwork == 1) {
-                    connectionsClient.stopDiscovery();
-                    // TODO: this is a temporary hacky fix for preventing a cycle in my network
-                    // I think this solution would work in theory only if one giant network was formed
-                    // if two smaller networks are formed, they wouldn't be able to connect to each other
-                    // Look into echoing a message and then disconnecting if necessary.
+          new PayloadCallback() {
+            @Override
+            public void onPayloadReceived(String endpointId, Payload payload) {
+              try {
+                Object deserialized = SerializationHelper.deserialize(payload.asBytes());
+                if (deserialized instanceof String) {
+                  String msg = (String) deserialized;
+                  Log.d(TAG, msg);
+                      if (msg.startsWith(codeName)) {
+                        Log.d(TAG, "onPayloadReceived: CYCLE DETECTED...");
+                        // TODO: figure out how to deal with this situation if it ever occurs.
+                          // I think it's impossible to ever get a cycle, but it's hard to say
+                          // for sure, especially with only being able to test with small networks.
+                      }
+                      else {
+                          Log.d(TAG, "onPayloadReceived: Forwarding message");
+                          sendMessage(msg,endpointId);
+                      }
+                } else {
+                  HashSet<String> ids = (HashSet<String>) deserialized;
+                  network.setEndpoints(endpointId, ids);
+                  setNumInNetwork();
                   }
-                  connectionsClient.stopAdvertising();
-                  sendNumInNetwork(endpointId);
-                }
+              } catch (IOException | ClassNotFoundException e) {
+                e.printStackTrace();
               }
             }
-            else {
-              sendMessage(msg, endpointId);
-            }
-        }
 
-        @Override
-        public void onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {
-          if (update.getStatus() == Status.SUCCESS) {
-              Log.d(TAG, "Message successfully received.");
-          }
-        }
-      };
+            @Override
+            public void onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {
+              if (update.getStatus() == Status.SUCCESS) {
+                Log.d(TAG, "Message successfully received.");
+              }
+            }
+          };
 
   // Callbacks for finding other devices
   private final EndpointDiscoveryCallback endpointDiscoveryCallback =
       new EndpointDiscoveryCallback() {
         @Override
         public void onEndpointFound(String endpointId, DiscoveredEndpointInfo info) {
-          if (!info.getEndpointName().equals(codeName)) {
+          if (!(network.contains(endpointId) || info.getEndpointName().equals(codeName))) {
             Log.i(TAG, "onEndpointFound: endpoint found, connecting");
             connectionsClient.requestConnection(codeName, endpointId, connectionLifecycleCallback);
           }
@@ -177,8 +130,13 @@ public class MainActivity extends AppCompatActivity {
       new ConnectionLifecycleCallback() {
         @Override
         public void onConnectionInitiated(String endpointId, ConnectionInfo connectionInfo) {
-              Log.i(TAG, "onConnectionInitiated: accepting connection");
-              connectionsClient.acceptConnection(endpointId, payloadCallback);
+            if (network.contains(endpointId)) {
+                Log.i(TAG, "onConnectionInitiated: prevented cycle");
+            }
+            else {
+                Log.i(TAG, "onConnectionInitiated: accepting connection");
+                connectionsClient.acceptConnection(endpointId, payloadCallback);
+            }
           }
 
         @Override
@@ -186,30 +144,36 @@ public class MainActivity extends AppCompatActivity {
           if (result.getStatus().isSuccess()) {
             Log.i(TAG, "onConnectionResult: connection successful");
 
-            sendConnectInfo(endpointId);
+              try {
+                    if (network.contains(endpointId)) {
+                        Log.i(TAG, "onConnectionResult: prevented cycle");
+                        connectionsClient.disconnectFromEndpoint(endpointId);
+                    }
+                  else if (network.addNode(endpointId)) {
+                    setNumInNetwork();
+                    Log.d(TAG, String.format("onConnectionResult: %s added to network", endpointId));
+                  }
+                  else {
+                    Log.d(TAG, String.format("onConnectionResult: could not add %s to network."));
+                  }
+              } catch (IOException e) {
+                  e.printStackTrace();
+              }
 
 
           } else {
-            if (endpointId.equals(discovererId)) {
-              discovererId = "";
-            }
-            if (endpointId.equals(advertiserId)) {
-              discovererId = "";
-            }
+              if (network.remove(endpointId)) {
+                Log.d(TAG, String.format("OnConnectionResult: Removing %s from network.", endpointId));
+              }
+              else {
+                Log.d(TAG, String.format("OnConnectionResult: Failed to remove %s from network.", endpointId));
+              }
             Log.i(TAG, "onConnectionResult: connection failed");
           }
         }
 
         @Override
         public void onDisconnected(String endpointId) {
-          if (endpointId.equals(discovererId)) {
-            discovererId = "";
-            startDiscovery();
-          }
-          if (endpointId.equals(advertiserId)) {
-            advertiserId = "";
-            startAdvertising();
-          }
           Log.i(TAG, "onDisconnected: disconnected from network");
         }
       };
@@ -232,11 +196,16 @@ public class MainActivity extends AppCompatActivity {
     sendMessageButton.setOnClickListener(new View.OnClickListener() {
       @Override
       public void onClick(View view) {
-        sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
+        try {
+            sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
       }
     });
 
     connectionsClient = Nearby.getConnectionsClient(this);
+    network = new Network(codeName, connectionsClient);
     startAdvertising();
     startDiscovery();
   }
@@ -290,15 +259,7 @@ public class MainActivity extends AppCompatActivity {
   }
 
 
-  /** Disconnects from the opponent and reset the UI. */
-  public void disconnect(View view) {
-    for (String id: endpointIds) {
-      connectionsClient.disconnectFromEndpoint(id);
-    }
-  }
-
-
-  /** Starts looking for other players using Nearby Connections. */
+    /** Starts looking for other players using Nearby Connections. */
   private void startDiscovery() {
     // Note: Discovery may fail. To keep this demo simple, we don't handle failures.
     connectionsClient.startDiscovery(
@@ -315,45 +276,16 @@ public class MainActivity extends AppCompatActivity {
   }
 
 
-  /** Sends the user's selection of rock, paper, or scissors to the opponent. */
-  private void sendMessage(String message, String ignoreId) {
-    Log.d(TAG,String.format("name: %s, discoverer id: %s, advertiser id: %s, ignore id: %s",codeName,discovererId,advertiserId,ignoreId));
-     if (!advertiserId.equals("") && !advertiserId.equals(ignoreId)) {
-       Log.d(TAG,"Sending message to the advertiser");
-       connectionsClient.sendPayload(
-               advertiserId, Payload.fromBytes(message.getBytes(UTF_8)));
-     }
-    if (!discovererId.equals("") && !discovererId.equals(ignoreId)) {
-      Log.d(TAG,"Sending message to the discoverer");
-      connectionsClient.sendPayload(
-              discovererId, Payload.fromBytes(message.getBytes(UTF_8)));
-    }
-
-    if (!message.startsWith("MSG")) {
-      Log.d(TAG,"setting message board");
-      lastMessage.setText(message);
-    }
-  }
-
-  private void setLastMessage(String message) {
-    lastMessage.setText(message);
-  }
-
-  private void sendNumInNetwork(String endpointId) {
-    Log.d(TAG,"Sending number of nodes in network...");
-    String msg = "MSG 0: " + numInNetwork;
-    connectionsClient.sendPayload(endpointId,Payload.fromBytes(msg.getBytes(UTF_8)));
-
-  }
-
-  private void sendConnectInfo(String endpointId) {
-    Log.d(TAG,"Sending info about current endpoints...");
-    String msg = String.format("MSG 2: %d%d%s",discovererId.isEmpty()? 1 : 0,advertiserId.isEmpty()? 1: 0,codeName);
-    connectionsClient.sendPayload(endpointId,Payload.fromBytes(msg.getBytes(UTF_8)));
-
-  }
 
   private void setNumInNetwork() {
+    int numInNetwork = network.getSize();
       numConnectedText.setText(String.format("Devices in network: %d",numInNetwork));
+      Log.d(TAG, String.format("Devices in network: %d",numInNetwork));
+  }
+
+  private void sendMessage(String msg, String ignoreId) throws IOException {
+      network.sendMessage(msg, ignoreId);
+      Log.d(TAG,"setting message board");
+      lastMessage.setText(msg);
   }
 }
