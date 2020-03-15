@@ -33,17 +33,6 @@ import com.google.android.gms.nearby.connection.Strategy;
 import java.io.IOException;
 import java.util.HashSet;
 
-/*
-
-TODO: keep different sets of the endpoints connected to the discoverer and the endpoints connected to the advertiser
-When you disconnect from one, you know what is no longer in the network and the new size of the network
-
-rename advertiser to discovered
-rename discoverer to advertised
-
-More intuitive
- */
-
 
 /** Activity controlling the Message Board */
 public class MainActivity extends AppCompatActivity {
@@ -92,7 +81,9 @@ public class MainActivity extends AppCompatActivity {
                   Log.d(TAG, msg);
                       if (msg.startsWith(codeName)) {
                         Log.d(TAG, "onPayloadReceived: CYCLE DETECTED...");
-//                        network.remove(endpointId);
+                        // TODO: figure out how to deal with this situation if it ever occurs.
+                          // I think it's impossible to ever get a cycle, but it's hard to say
+                          // for sure, especially with only being able to test with small networks.
                       }
                       else {
                           Log.d(TAG, "onPayloadReceived: Forwarding message");
