@@ -1,4 +1,4 @@
-package com.google.location.nearby.apps.messageboard;
+package com.google.location.nearby.apps.connectedcrossroad;
 
 import android.util.Log;
 
@@ -21,7 +21,7 @@ This Network class enables us to communicate with the X nodes, and then the X de
 messages to the Y nodes.
  */
 public class Network {
-    private static final String TAG = "MessageBoard";
+    private static final String TAG = "connectedcrossroad";
     private Node n1;
     private Node n2;
     private String name;

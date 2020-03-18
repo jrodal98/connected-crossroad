@@ -1,4 +1,4 @@
-package com.google.location.nearby.apps.messageboard;
+package com.google.location.nearby.apps.connectedcrossroad;
 
 import android.Manifest;
 import android.content.Context;
@@ -37,7 +37,7 @@ import java.util.HashSet;
 /** Activity controlling the Message Board */
 public class MainActivity extends AppCompatActivity {
 
-  private static final String TAG = "MessageBoard";
+  private static final String TAG = "connectedcrossroad";
 
   private static final String[] REQUIRED_PERMISSIONS =
       new String[] {

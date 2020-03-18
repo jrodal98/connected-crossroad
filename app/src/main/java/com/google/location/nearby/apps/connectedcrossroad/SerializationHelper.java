@@ -1,4 +1,4 @@
-package com.google.location.nearby.apps.messageboard;
+package com.google.location.nearby.apps.connectedcrossroad;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
