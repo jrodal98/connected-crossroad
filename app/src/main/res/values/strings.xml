@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-  <string name="app_name">Message Board</string>
+  <string name="app_name">Connected Crossroad</string>
   <string name="error_missing_permissions">Cannot start without required permissions</string>
   <string name="device_name_not_set">Device name: not set</string>
   <string name="enter_message_here">Enter Message Here!</string>

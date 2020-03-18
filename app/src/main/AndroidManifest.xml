@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.google.location.nearby.apps.messageboard">
+    package="com.google.location.nearby.apps.connectedcrossroad">
 
     <!-- Required for Nearby Connections -->
     <uses-permission android:name="android.permission.BLUETOOTH"/>
@@ -16,7 +16,7 @@
         android:supportsRtl="true"
         android:theme="@style/AppTheme">
         <activity
-            android:name=".MainActivity"
+            android:name="com.google.location.nearby.apps.connectedcrossroad.MainActivity"
             android:screenOrientation="portrait">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
