@@ -38,6 +38,7 @@ import java.util.HashSet;
 public class MainActivity extends AppCompatActivity {
 
   private static final String TAG = "connectedcrossroad";
+    private static final String LATENCY = "latency_tag";
 
   private static final String[] REQUIRED_PERMISSIONS =
       new String[] {
@@ -102,8 +103,10 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {
               if (update.getStatus() == Status.SUCCESS) {
+                  Log.d(LATENCY, String.format("%d %d", update.getPayloadId(), System.currentTimeMillis()));
                 Log.d(TAG, "Message successfully received.");
               }
+
             }
           };
 

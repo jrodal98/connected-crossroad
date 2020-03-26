@@ -22,6 +22,7 @@ messages to the Y nodes.
  */
 public class Network {
     private static final String TAG = "connectedcrossroad";
+    private static final String LATENCY = "latency_tag";
     private Node n1;
     private Node n2;
     private String name;
@@ -132,13 +133,19 @@ public class Network {
         Log.d(TAG,String.format("name: %s, id1: %s, id2: %s, ignore id: %s",name, n1.getId(), n2.getId(),ignoreId));
         if (n1.isAssigned() && !n1.is(ignoreId)) {
             Log.d(TAG,"Sending message to n1");
+            byte[] bytes = SerializationHelper.serialize(message);
+            Payload pl = Payload.fromBytes(bytes);
+            Log.d(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(),bytes.length));
             connectionsClient.sendPayload(
-                    n1.getId(), Payload.fromBytes(SerializationHelper.serialize(message)));
+                    n1.getId(), pl);
         }
         if (n2.isAssigned() && !n2.is(ignoreId)) {
-            Log.d(TAG,"Sending message to the n2");
+            Log.d(TAG,"Sending message to n2");
+            byte[] bytes = SerializationHelper.serialize(message);
+            Payload pl = Payload.fromBytes(bytes);
+            Log.d(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(),bytes.length));
             connectionsClient.sendPayload(
-                    n2.getId(), Payload.fromBytes(SerializationHelper.serialize(message)));
+                    n2.getId(), pl);
         }
 
     }
