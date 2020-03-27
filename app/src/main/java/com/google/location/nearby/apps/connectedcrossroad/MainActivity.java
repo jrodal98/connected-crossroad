@@ -103,7 +103,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {
               if (update.getStatus() == Status.SUCCESS) {
-                  Log.d(LATENCY, String.format("%d %d", update.getPayloadId(), System.currentTimeMillis()));
+                  Log.i(LATENCY, String.format("%d %d", update.getPayloadId(), System.currentTimeMillis()));
                 Log.d(TAG, "Message successfully received.");
               }
 
@@ -195,12 +195,19 @@ public class MainActivity extends AppCompatActivity {
 
 
     deviceNameText.setText(String.format("Device name: %s", codeName));
-
+    int num_bytes = (int) Math.pow(2,3) - 7;
+      final StringBuilder sb = new StringBuilder(num_bytes);
+      for(int i = 0; i < num_bytes; i++) {
+          sb.append(".");
+      }
+      final String msg = sb.toString();
     sendMessageButton.setOnClickListener(new View.OnClickListener() {
       @Override
       public void onClick(View view) {
         try {
-            sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
+//            sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
+
+            sendMessage(msg, "");
         } catch (IOException e) {
           e.printStackTrace();
         }
