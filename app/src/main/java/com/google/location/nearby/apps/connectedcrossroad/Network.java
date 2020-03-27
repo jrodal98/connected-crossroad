@@ -135,7 +135,7 @@ public class Network {
             Log.d(TAG,"Sending message to n1");
             byte[] bytes = SerializationHelper.serialize(message);
             Payload pl = Payload.fromBytes(bytes);
-            Log.d(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(),bytes.length));
+            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(),bytes.length));
             connectionsClient.sendPayload(
                     n1.getId(), pl);
         }
@@ -143,7 +143,7 @@ public class Network {
             Log.d(TAG,"Sending message to n2");
             byte[] bytes = SerializationHelper.serialize(message);
             Payload pl = Payload.fromBytes(bytes);
-            Log.d(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(),bytes.length));
+            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(),bytes.length));
             connectionsClient.sendPayload(
                     n2.getId(), pl);
         }
