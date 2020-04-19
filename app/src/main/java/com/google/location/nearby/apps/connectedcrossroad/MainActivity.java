@@ -94,8 +94,8 @@ public class MainActivity extends AppCompatActivity {
                             }
                         } else {
                             HashSet<String> ids = (HashSet<String>) deserialized;
-                            network.setEndpoints(endpointId, ids);
-                            setNumInNetwork();
+                            if (network.setEndpoints(endpointId, ids))
+                                setNumInNetwork();
                         }
                     } catch (IOException | ClassNotFoundException e) {
                         e.printStackTrace();

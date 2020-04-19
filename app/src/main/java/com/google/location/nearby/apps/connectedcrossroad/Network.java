@@ -145,7 +145,12 @@ public class Network {
      */
     public boolean setEndpoints(String id, HashSet<String> ids) throws IOException {
         Log.d(TAG, String.format("Setting and sending endpoints for %s", id));
-        if (n1.is(id)) {
+        if (ids.contains(id)) {
+            Log.d(TAG, "setEndpoints: CYCLE DETECTED - FIXING");
+            connectionsClient.disconnectFromEndpoint(id);
+            return false;
+        }
+        else if (n1.is(id)) {
             n1.setEndpoints(ids);
             sendNodesInNetwork(n1, n2);
         } else if (n2.is(id)) {
