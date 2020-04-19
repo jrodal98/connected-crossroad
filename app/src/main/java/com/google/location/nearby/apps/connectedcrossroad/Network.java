@@ -35,6 +35,7 @@ public class Network {
     private ConnectionsClient connectionsClient;
     private EndpointDiscoveryCallback discoveryCallback;
     private ConnectionLifecycleCallback lifecycleCallback;
+    private boolean searching;
 
     public Network(String name, ConnectionsClient connectionsClient, EndpointDiscoveryCallback discoveryCallback, ConnectionLifecycleCallback lifecycleCallback) {
         n1 = new Node();
@@ -51,6 +52,7 @@ public class Network {
      * Starts looking for other players using Nearby Connections.
      */
     public void startDiscovery() {
+        searching = true;
         // Note: Discovery may fail. To keep this demo simple, we don't handle failures.
         connectionsClient.startDiscovery(
                 TAG, discoveryCallback,
@@ -86,6 +88,7 @@ public class Network {
             n2.setId(id);
             connectionsClient.stopAdvertising();
             connectionsClient.stopDiscovery();
+            searching = false;
             Log.d(TAG, "Stopping advertising and discovery");
             sendNodesInNetwork(n1, n2);
         } else {
@@ -108,18 +111,25 @@ public class Network {
     public boolean remove(String id) {
         if (n1.is(id)) {
             n1.clear();
-            if (n2.isAssigned()) {
-               startAdvertising();
-               startDiscovery();
+            try {
+                sendNodesInNetwork(n1,n2);
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         } else if (n2.is(id)) {
             n2.clear();
-            if (n1.isAssigned()) {
-                startAdvertising();
-                startDiscovery();
+            try {
+                sendNodesInNetwork(n2,n1);
+            } catch (IOException e) {
+                e.printStackTrace();
             }
         } else {
             return false;
+        }
+
+        if (!searching) {
+            startAdvertising();
+            startDiscovery();
         }
         return true;
     }
@@ -178,6 +188,24 @@ public class Network {
             byte[] bytes = SerializationHelper.serialize(message);
             Payload pl = Payload.fromBytes(bytes);
             Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(), bytes.length));
+            connectionsClient.sendPayload(
+                    n2.getId(), pl);
+        }
+
+    }
+    /*
+    Sends a message to the nodes directly connected to the running device, ignoring any device matching
+    "ignoreId."
+     */
+    public void forwardPayload(Payload pl, String ignoreId) throws IOException {
+        Log.d(TAG, String.format("name: %s, id1: %s, id2: %s, ignore id: %s", name, n1.getId(), n2.getId(), ignoreId));
+        if (n1.isAssigned() && !n1.is(ignoreId)) {
+            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis()));
+            connectionsClient.sendPayload(
+                    n1.getId(), pl);
+        }
+        if (n2.isAssigned() && !n2.is(ignoreId)) {
+            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis()));
             connectionsClient.sendPayload(
                     n2.getId(), pl);
         }

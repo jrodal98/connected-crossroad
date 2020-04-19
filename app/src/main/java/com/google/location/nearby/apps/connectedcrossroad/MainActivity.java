@@ -24,6 +24,7 @@ import com.google.android.gms.nearby.connection.ConnectionInfo;
 import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback;
 import com.google.android.gms.nearby.connection.ConnectionResolution;
 import com.google.android.gms.nearby.connection.ConnectionsClient;
+import com.google.android.gms.nearby.connection.ConnectionsStatusCodes;
 import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo;
 import com.google.android.gms.nearby.connection.DiscoveryOptions;
 import com.google.android.gms.nearby.connection.EndpointDiscoveryCallback;
@@ -85,10 +86,8 @@ public class MainActivity extends AppCompatActivity {
                             String msg = (String) deserialized;
                             Log.d(TAG, msg);
                             if (msg.startsWith(codeName)) {
-                                Log.d(TAG, "onPayloadReceived: CYCLE DETECTED...");
-                                // TODO: figure out how to deal with this situation if it ever occurs.
-                                // I think it's impossible to ever get a cycle, but it's hard to say
-                                // for sure, especially with only being able to test with small networks.
+                                Log.d(TAG, "onPayloadReceived: CYCLE DETECTED - fixing it!");
+                                connectionsClient.disconnectFromEndpoint(endpointId);
                             } else {
                                 Log.d(TAG, "onPayloadReceived: Forwarding message");
                                 sendMessage(msg, endpointId);
@@ -118,18 +117,16 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public void onEndpointFound(final String endpointId, final DiscoveredEndpointInfo info) {
                     if (!(network.contains(endpointId) || info.getEndpointName().equals(codeName))) {
-//                        try {
-//                            Thread.sleep((long)(Math.random() * 2000));
-//                        } catch (InterruptedException e) {
-//                            e.printStackTrace();
-//                        }
                         Log.i(TAG, "onEndpointFound: endpoint found, connecting");
                         connectionsClient.requestConnection(codeName, endpointId, connectionLifecycleCallback).addOnFailureListener(new OnFailureListener() {
                             @Override
                             public void onFailure(@NonNull Exception e) {
-                                Log.d(TAG, "Endpoint failure");
+//                                ConnectionsStatusCodes.STATUS_ENDPOINT_IO_ERROR;
+                                Log.d(TAG, "Endpoint failure " + e.getMessage());
+
                                 // request connection again on one of the devices
-                                if (codeName.compareTo(info.getEndpointName()) < 0) {
+                                // 8012: STATUS_ENDPOINT_IO_ERROR is the simulatenous connection requst error
+                                if (e.getMessage().startsWith("8012") && codeName.compareTo(info.getEndpointName()) < 0) {
                                     Log.d(TAG, "Sending another connection request.");
                                     connectionsClient.requestConnection(codeName, endpointId, connectionLifecycleCallback);
                                 }
@@ -179,23 +176,17 @@ public class MainActivity extends AppCompatActivity {
 
 
                     } else {
-                        if (network.remove(endpointId)) {
-                            Log.d(TAG, String.format("OnConnectionResult: Removing %s from network.", endpointId));
-                        } else {
-                            Log.d(TAG, String.format("OnConnectionResult: Failed to remove %s from network.", endpointId));
-                        }
                         Log.i(TAG, "onConnectionResult: connection failed");
                     }
                 }
 
                 @Override
                 public void onDisconnected(String endpointId) {
-                    Log.i(TAG, "onDisconnected: disconnected from network");
+                    Log.i(TAG, "onDisconnected: disconnected from " + endpointId);
                     network.remove(endpointId);
                     setNumInNetwork();
                 }
             };
-    private String foundAdvertiserId;
 
     @Override
     protected void onCreate(@Nullable Bundle bundle) {
@@ -220,14 +211,14 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View view) {
                 try {
-                    if (sendMessageText.getText().toString().equals("Enter Message Here")) {
-                        Log.i(LATENCY, "SWITCH");
-                        sendMessageText.setText("Enter Message Here!");
-                    }
-//            sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
-                    else {
-                        sendMessage(msg, "");
-                    }
+                    sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
+//                    if (sendMessageText.getText().toString().equals("Enter Message Here")) {
+//                        Log.i(LATENCY, "SWITCH");
+//                        sendMessageText.setText("Enter Message Here!");
+//                    }
+//                    else {
+//                        sendMessage(msg, "");
+//                    }
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
