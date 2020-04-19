@@ -2,8 +2,13 @@ package com.google.location.nearby.apps.connectedcrossroad;
 
 import android.util.Log;
 
+import com.google.android.gms.nearby.connection.AdvertisingOptions;
+import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback;
 import com.google.android.gms.nearby.connection.ConnectionsClient;
+import com.google.android.gms.nearby.connection.DiscoveryOptions;
+import com.google.android.gms.nearby.connection.EndpointDiscoveryCallback;
 import com.google.android.gms.nearby.connection.Payload;
+import com.google.android.gms.nearby.connection.Strategy;
 
 import java.io.IOException;
 import java.util.HashSet;
@@ -23,18 +28,44 @@ messages to the Y nodes.
 public class Network {
     private static final String TAG = "connectedcrossroad";
     private static final String LATENCY = "latency_tag";
+    private static final Strategy STRATEGY = Strategy.P2P_CLUSTER;
     private Node n1;
     private Node n2;
     private String name;
     private ConnectionsClient connectionsClient;
+    private EndpointDiscoveryCallback discoveryCallback;
+    private ConnectionLifecycleCallback lifecycleCallback;
 
-    public Network(String name, ConnectionsClient connectionsClient) {
+    public Network(String name, ConnectionsClient connectionsClient, EndpointDiscoveryCallback discoveryCallback, ConnectionLifecycleCallback lifecycleCallback) {
         n1 = new Node();
         n2 = new Node();
         this.name = name;
         this.connectionsClient = connectionsClient;
+        this.discoveryCallback = discoveryCallback;
+        this.lifecycleCallback = lifecycleCallback;
+        startAdvertising();
+        startDiscovery();
     }
 
+    /**
+     * Starts looking for other players using Nearby Connections.
+     */
+    public void startDiscovery() {
+        // Note: Discovery may fail. To keep this demo simple, we don't handle failures.
+        connectionsClient.startDiscovery(
+                TAG, discoveryCallback,
+                new DiscoveryOptions.Builder().setStrategy(STRATEGY).build());
+    }
+
+    /**
+     * Broadcasts our presence using Nearby Connections so other players can find us.
+     */
+    public void startAdvertising() {
+        // Note: Advertising may fail. To keep this demo simple, we don't handle failures.
+        connectionsClient.startAdvertising(
+                name, TAG, lifecycleCallback,
+                new AdvertisingOptions.Builder().setStrategy(STRATEGY).build());
+    }
     public int getSize() {
         return n1.getSize() + n2.getSize() + 1;
     }
@@ -50,16 +81,14 @@ public class Network {
     public boolean addNode(String id) throws IOException {
         if (!n1.isAssigned()) {
             n1.setId(id);
-            sendNodesInNetwork(n2,n1);
-        }
-        else if (!n2.isAssigned()) {
+            sendNodesInNetwork(n2, n1);
+        } else if (!n2.isAssigned()) {
             n2.setId(id);
             connectionsClient.stopAdvertising();
             connectionsClient.stopDiscovery();
             Log.d(TAG, "Stopping advertising and discovery");
-            sendNodesInNetwork(n1,n2);
-        }
-        else {
+            sendNodesInNetwork(n1, n2);
+        } else {
             return false;
         }
         return true;
@@ -79,11 +108,17 @@ public class Network {
     public boolean remove(String id) {
         if (n1.is(id)) {
             n1.clear();
-        }
-        else if (n2.is(id)) {
+            if (n2.isAssigned()) {
+               startAdvertising();
+               startDiscovery();
+            }
+        } else if (n2.is(id)) {
             n2.clear();
-        }
-        else {
+            if (n1.isAssigned()) {
+                startAdvertising();
+                startDiscovery();
+            }
+        } else {
             return false;
         }
         return true;
@@ -102,24 +137,23 @@ public class Network {
         Log.d(TAG, String.format("Setting and sending endpoints for %s", id));
         if (n1.is(id)) {
             n1.setEndpoints(ids);
-            sendNodesInNetwork(n1,n2);
-        }
-        else if (n2.is(id)) {
+            sendNodesInNetwork(n1, n2);
+        } else if (n2.is(id)) {
             n2.setEndpoints(ids);
-            sendNodesInNetwork(n2,n1);
-        }
-        else {
+            sendNodesInNetwork(n2, n1);
+        } else {
             return false;
         }
         return true;
     }
+
     /*
     Sends the nodes connected to the "from" node to the "to" node. This is done to help prevent cycles,
     to aid in disconnection, and the enable correct counting of the number of devices in the network.
      */
     private void sendNodesInNetwork(Node from, Node to) throws IOException {
         if (to.isAssigned()) {
-            Log.d(TAG,String.format("Sending nodes connected from %s to %s", from.getId(), to.getId()));
+            Log.d(TAG, String.format("Sending nodes connected from %s to %s", from.getId(), to.getId()));
             connectionsClient.sendPayload(to.getId(), Payload.fromBytes(SerializationHelper.serialize(from.getEndpoints())));
         }
 
@@ -130,20 +164,20 @@ public class Network {
     "ignoreId."
      */
     public void sendMessage(String message, String ignoreId) throws IOException {
-        Log.d(TAG,String.format("name: %s, id1: %s, id2: %s, ignore id: %s",name, n1.getId(), n2.getId(),ignoreId));
+        Log.d(TAG, String.format("name: %s, id1: %s, id2: %s, ignore id: %s", name, n1.getId(), n2.getId(), ignoreId));
         if (n1.isAssigned() && !n1.is(ignoreId)) {
-            Log.d(TAG,"Sending message to n1");
+            Log.d(TAG, "Sending message to n1");
             byte[] bytes = SerializationHelper.serialize(message);
             Payload pl = Payload.fromBytes(bytes);
-            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(),bytes.length));
+            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(), bytes.length));
             connectionsClient.sendPayload(
                     n1.getId(), pl);
         }
         if (n2.isAssigned() && !n2.is(ignoreId)) {
-            Log.d(TAG,"Sending message to n2");
+            Log.d(TAG, "Sending message to n2");
             byte[] bytes = SerializationHelper.serialize(message);
             Payload pl = Payload.fromBytes(bytes);
-            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(),bytes.length));
+            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(), bytes.length));
             connectionsClient.sendPayload(
                     n2.getId(), pl);
         }
@@ -151,6 +185,7 @@ public class Network {
     }
 
 }
+
 /*
 A class for organizing device nodes.
  */
