@@ -74,6 +74,10 @@ public class MainActivity extends AppCompatActivity {
     private TextView lastMessage;
     private EditText sendMessageText;
 
+    private boolean testing = true;
+    private boolean nokia = false;
+    private boolean pixel = !nokia;
+
 
     // Callbacks for receiving payloads
     private final PayloadCallback payloadCallback =
@@ -90,7 +94,12 @@ public class MainActivity extends AppCompatActivity {
                                 connectionsClient.disconnectFromEndpoint(endpointId);
                             } else {
                                 Log.d(TAG, "onPayloadReceived: Forwarding message");
-                                sendMessage(msg, endpointId);
+                                if (testing && nokia) {
+                                    sendMessage(msg,"");
+                                }
+                                else if (!testing){
+                                    sendMessage(msg, endpointId);
+                                }
                             }
                         } else {
                             HashSet<String> ids = (HashSet<String>) deserialized;
@@ -105,7 +114,7 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public void onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {
                     if (update.getStatus() == Status.SUCCESS) {
-                        Log.i(LATENCY, String.format("%d %d", update.getPayloadId(), System.currentTimeMillis()));
+                        Log.i(LATENCY, String.format("%s %d", network.payloadId == update.getPayloadId() ? "s":"r", System.currentTimeMillis()));
                         Log.d(TAG, "Message successfully received.");
                     }
                 }
@@ -122,13 +131,13 @@ public class MainActivity extends AppCompatActivity {
                             @Override
                             public void onFailure(@NonNull Exception e) {
 //                                ConnectionsStatusCodes.STATUS_ENDPOINT_IO_ERROR;
-                                Log.d(TAG, "Endpoint failure " + e.getMessage());
+                                Log.i(TAG, "Endpoint failure " + e.getMessage());
 
                                 // request connection again on one of the devices
                                 // 8012: STATUS_ENDPOINT_IO_ERROR is the simulatenous connection requst error
                                 if (e.getMessage().startsWith("8012") && codeName.compareTo(info.getEndpointName()) < 0) {
                                     Log.d(TAG, "Sending another connection request.");
-                                    connectionsClient.requestConnection(codeName, endpointId, connectionLifecycleCallback);
+                                    onEndpointFound(endpointId, info);
                                 }
                             }
                         });
@@ -211,14 +220,14 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View view) {
                 try {
-                    sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
-//                    if (sendMessageText.getText().toString().equals("Enter Message Here")) {
-//                        Log.i(LATENCY, "SWITCH");
-//                        sendMessageText.setText("Enter Message Here!");
-//                    }
-//                    else {
-//                        sendMessage(msg, "");
-//                    }
+//                    sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
+                    if (sendMessageText.getText().toString().equals("Enter Message Here")) {
+                        Log.i(LATENCY, "SWITCH");
+                        sendMessageText.setText("Enter Message Here!");
+                    }
+                    else {
+                        sendMessage(msg, "");
+                    }
                 } catch (IOException e) {
                     e.printStackTrace();
                 }

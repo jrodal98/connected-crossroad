@@ -36,6 +36,7 @@ public class Network {
     private EndpointDiscoveryCallback discoveryCallback;
     private ConnectionLifecycleCallback lifecycleCallback;
     private boolean searching;
+    public long payloadId = 0;
 
     public Network(String name, ConnectionsClient connectionsClient, EndpointDiscoveryCallback discoveryCallback, ConnectionLifecycleCallback lifecycleCallback) {
         n1 = new Node();
@@ -184,7 +185,8 @@ public class Network {
             Log.d(TAG, "Sending message to n1");
             byte[] bytes = SerializationHelper.serialize(message);
             Payload pl = Payload.fromBytes(bytes);
-            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(), bytes.length));
+            payloadId = pl.getId();
+//            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(), bytes.length));
             connectionsClient.sendPayload(
                     n1.getId(), pl);
         }
@@ -192,9 +194,11 @@ public class Network {
             Log.d(TAG, "Sending message to n2");
             byte[] bytes = SerializationHelper.serialize(message);
             Payload pl = Payload.fromBytes(bytes);
-            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(), bytes.length));
+            payloadId = pl.getId();
+//            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(), bytes.length));
             connectionsClient.sendPayload(
                     n2.getId(), pl);
+//            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(), bytes.length));
         }
 
     }
