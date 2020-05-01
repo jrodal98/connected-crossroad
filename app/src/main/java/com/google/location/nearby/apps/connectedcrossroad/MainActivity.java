@@ -105,7 +105,6 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public void onPayloadTransferUpdate(String endpointId, PayloadTransferUpdate update) {
                     if (update.getStatus() == Status.SUCCESS) {
-                        Log.i(LATENCY, String.format("%d %d", update.getPayloadId(), System.currentTimeMillis()));
                         Log.d(TAG, "Message successfully received.");
                     }
                 }
@@ -117,6 +116,7 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public void onEndpointFound(final String endpointId, final DiscoveredEndpointInfo info) {
                     if (!(network.contains(endpointId) || info.getEndpointName().equals(codeName))) {
+                        // Stopping and restarting discovery may increase connection speed
                         Log.i(TAG, "onEndpointFound: endpoint found, connecting");
                         connectionsClient.requestConnection(codeName, endpointId, connectionLifecycleCallback).addOnFailureListener(new OnFailureListener() {
                             @Override
@@ -201,24 +201,11 @@ public class MainActivity extends AppCompatActivity {
 
 
         deviceNameText.setText(String.format("Device name: %s", codeName));
-        int num_bytes = 100 - 7;
-        final StringBuilder sb = new StringBuilder(num_bytes);
-        for (int i = 0; i < num_bytes; i++) {
-            sb.append(".");
-        }
-        final String msg = sb.toString();
         sendMessageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 try {
                     sendMessage(String.format("%s: %s",codeName, sendMessageText.getText()), "");
-//                    if (sendMessageText.getText().toString().equals("Enter Message Here")) {
-//                        Log.i(LATENCY, "SWITCH");
-//                        sendMessageText.setText("Enter Message Here!");
-//                    }
-//                    else {
-//                        sendMessage(msg, "");
-//                    }
                 } catch (IOException e) {
                     e.printStackTrace();
                 }
