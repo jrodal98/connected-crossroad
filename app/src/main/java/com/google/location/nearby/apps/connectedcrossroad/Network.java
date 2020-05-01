@@ -35,7 +35,7 @@ public class Network {
     private ConnectionsClient connectionsClient;
     private EndpointDiscoveryCallback discoveryCallback;
     private ConnectionLifecycleCallback lifecycleCallback;
-    private boolean searching;
+    private boolean searching = false;
 
     public Network(String name, ConnectionsClient connectionsClient, EndpointDiscoveryCallback discoveryCallback, ConnectionLifecycleCallback lifecycleCallback) {
         n1 = new Node();
@@ -52,11 +52,20 @@ public class Network {
      * Starts looking for other players using Nearby Connections.
      */
     public void startDiscovery() {
-        searching = true;
-        // Note: Discovery may fail. To keep this demo simple, we don't handle failures.
-        connectionsClient.startDiscovery(
-                TAG, discoveryCallback,
-                new DiscoveryOptions.Builder().setStrategy(STRATEGY).build());
+        if (!searching) {
+            searching = true;
+            connectionsClient.startDiscovery(
+                    TAG, discoveryCallback,
+                    new DiscoveryOptions.Builder().setStrategy(STRATEGY).build());
+        }
+    }
+
+    public void stopDiscovery() {
+        if (searching){
+            connectionsClient.stopDiscovery();
+            searching = false;
+
+        }
     }
 
     /**
@@ -87,8 +96,7 @@ public class Network {
         } else if (!n2.isAssigned()) {
             n2.setId(id);
             connectionsClient.stopAdvertising();
-            connectionsClient.stopDiscovery();
-            searching = false;
+            stopDiscovery();
             Log.d(TAG, "Stopping advertising and discovery");
             sendNodesInNetwork(n1, n2);
         } else {

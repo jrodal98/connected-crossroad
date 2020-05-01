@@ -116,7 +116,7 @@ public class MainActivity extends AppCompatActivity {
                 @Override
                 public void onEndpointFound(final String endpointId, final DiscoveredEndpointInfo info) {
                     if (!(network.contains(endpointId) || info.getEndpointName().equals(codeName))) {
-                        // Stopping and restarting discovery may increase connection speed
+                        network.stopDiscovery();
                         Log.i(TAG, "onEndpointFound: endpoint found, connecting");
                         connectionsClient.requestConnection(codeName, endpointId, connectionLifecycleCallback).addOnFailureListener(new OnFailureListener() {
                             @Override
@@ -157,6 +157,7 @@ public class MainActivity extends AppCompatActivity {
 
                 @Override
                 public void onConnectionResult(String endpointId, ConnectionResolution result) {
+                    network.startDiscovery(); // restart discovery
                     if (result.getStatus().isSuccess()) {
                         Log.i(TAG, "onConnectionResult: connection successful");
 
