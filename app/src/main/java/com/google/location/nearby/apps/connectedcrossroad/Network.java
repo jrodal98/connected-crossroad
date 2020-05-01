@@ -184,7 +184,6 @@ public class Network {
             Log.d(TAG, "Sending message to n1");
             byte[] bytes = SerializationHelper.serialize(message);
             Payload pl = Payload.fromBytes(bytes);
-            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(), bytes.length));
             connectionsClient.sendPayload(
                     n1.getId(), pl);
         }
@@ -192,7 +191,6 @@ public class Network {
             Log.d(TAG, "Sending message to n2");
             byte[] bytes = SerializationHelper.serialize(message);
             Payload pl = Payload.fromBytes(bytes);
-            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis(), bytes.length));
             connectionsClient.sendPayload(
                     n2.getId(), pl);
         }
@@ -205,12 +203,10 @@ public class Network {
     public void forwardPayload(Payload pl, String ignoreId) throws IOException {
         Log.d(TAG, String.format("name: %s, id1: %s, id2: %s, ignore id: %s", name, n1.getId(), n2.getId(), ignoreId));
         if (n1.isAssigned() && !n1.is(ignoreId)) {
-            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis()));
             connectionsClient.sendPayload(
                     n1.getId(), pl);
         }
         if (n2.isAssigned() && !n2.is(ignoreId)) {
-            Log.i(LATENCY, String.format("%d %d %d", pl.getId(), System.currentTimeMillis()));
             connectionsClient.sendPayload(
                     n2.getId(), pl);
         }
