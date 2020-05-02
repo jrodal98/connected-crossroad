@@ -49,7 +49,7 @@ public class Network {
     }
 
     /**
-     * Starts looking for other players using Nearby Connections.
+     * Starts looking for devices to connect to. Only start discovery if the device isn't already discovering (aka searching)
      */
     public void startDiscovery() {
         if (!searching) {
@@ -60,6 +60,9 @@ public class Network {
         }
     }
 
+    /**
+     * Stop discovery. Fairly self explanatory
+     */
     public void stopDiscovery() {
         if (searching){
             connectionsClient.stopDiscovery();
@@ -69,7 +72,7 @@ public class Network {
     }
 
     /**
-     * Broadcasts our presence using Nearby Connections so other players can find us.
+     * Broadcasts our presence using Nearby Connections so other devices can find us.
      */
     public void startAdvertising() {
         // Note: Advertising may fail. To keep this demo simple, we don't handle failures.
@@ -77,11 +80,16 @@ public class Network {
                 name, TAG, lifecycleCallback,
                 new AdvertisingOptions.Builder().setStrategy(STRATEGY).build());
     }
+
+    /**
+    Get the number of devices in the network, which is equivalent to the number of devices
+     connected to both the nodes + 1 (for the calling device)
+     */
     public int getSize() {
         return n1.getSize() + n2.getSize() + 1;
     }
 
-    /*
+    /**
     Adds a node to the network by endpoint ID. Returns false if the device is already connected to
     two other devices, true otherwise.
 
@@ -105,7 +113,7 @@ public class Network {
         return true;
     }
 
-    /*
+    /**
     Returns true if an endpoint ID (and by extension, node) is contained within the network, false otherwise.
      */
     public boolean contains(String id) {
@@ -113,8 +121,8 @@ public class Network {
     }
 
 
-    /*
-    TODO: implement disconnection
+    /**
+    Removes a node from the network, informs the rest of the network, and restarts discovery + advertisement as necessary.
      */
     public boolean remove(String id) {
         if (n1.is(id)) {
@@ -143,7 +151,7 @@ public class Network {
     }
 
 
-    /*
+    /**
     Sets the endpoints for some node specified by its endpoint id. This ends up being called whenever
     some node in the network calls sendNodesInNetwork. This method will update the set of nodes that are
     connected to the node specified by id and then forward this new information to the other nodes
@@ -170,7 +178,7 @@ public class Network {
         return true;
     }
 
-    /*
+    /**
     Sends the nodes connected to the "from" node to the "to" node. This is done to help prevent cycles,
     to aid in disconnection, and the enable correct counting of the number of devices in the network.
      */
@@ -182,7 +190,7 @@ public class Network {
 
     }
 
-    /*
+    /**
     Sends a message to the nodes directly connected to the running device, ignoring any device matching
     "ignoreId."
      */
@@ -199,22 +207,6 @@ public class Network {
             Log.d(TAG, "Sending message to n2");
             byte[] bytes = SerializationHelper.serialize(message);
             Payload pl = Payload.fromBytes(bytes);
-            connectionsClient.sendPayload(
-                    n2.getId(), pl);
-        }
-
-    }
-    /*
-    Sends a message to the nodes directly connected to the running device, ignoring any device matching
-    "ignoreId."
-     */
-    public void forwardPayload(Payload pl, String ignoreId) throws IOException {
-        Log.d(TAG, String.format("name: %s, id1: %s, id2: %s, ignore id: %s", name, n1.getId(), n2.getId(), ignoreId));
-        if (n1.isAssigned() && !n1.is(ignoreId)) {
-            connectionsClient.sendPayload(
-                    n1.getId(), pl);
-        }
-        if (n2.isAssigned() && !n2.is(ignoreId)) {
             connectionsClient.sendPayload(
                     n2.getId(), pl);
         }

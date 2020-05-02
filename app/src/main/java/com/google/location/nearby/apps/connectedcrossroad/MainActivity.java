@@ -63,7 +63,7 @@ public class MainActivity extends AppCompatActivity {
     // Our handle to Nearby Connections
     private ConnectionsClient connectionsClient;
 
-    // Our randomly generated name
+    // Our randomly generated device name
     private final String codeName = CodenameGenerator.generate();
 
     private Network network;
@@ -73,11 +73,15 @@ public class MainActivity extends AppCompatActivity {
     private TextView deviceNameText;
     private TextView lastMessage;
     private EditText sendMessageText;
-
-
-    // Callbacks for receiving payloads
-    private final PayloadCallback payloadCallback =
-            new PayloadCallback() {
+    private final PayloadCallback payloadCallback = new PayloadCallback() {
+                /**
+                 * Handle incoming payloads. First, we deserialize the payload and determine
+                 * whether it is a set containing endpoint ids (new devices in the network)
+                 * or if it is a message from another device. Once we process the message/endpoints,    // Callbacks for receiving payloads
+                 * we forward the data to the rest of the network
+                 * @param endpointId The device who sent us the payload
+                 * @param payload the payload, which contains either a message or endpoitns
+                 */
                 @Override
                 public void onPayloadReceived(String endpointId, Payload payload) {
                     try {
@@ -85,12 +89,12 @@ public class MainActivity extends AppCompatActivity {
                         if (deserialized instanceof String) {
                             String msg = (String) deserialized;
                             Log.d(TAG, msg);
-                            if (msg.startsWith(codeName)) {
+                            if (msg.startsWith(codeName)) { // this should never happen
                                 Log.d(TAG, "onPayloadReceived: CYCLE DETECTED - fixing it!");
                                 connectionsClient.disconnectFromEndpoint(endpointId);
                             } else {
                                 Log.d(TAG, "onPayloadReceived: Forwarding message");
-                                sendMessage(msg, endpointId);
+                                sendMessage(msg, endpointId); // don't forward message to endpointId, since endpointId is the one who sent it to us.
                             }
                         } else {
                             HashSet<String> ids = (HashSet<String>) deserialized;
@@ -113,6 +117,18 @@ public class MainActivity extends AppCompatActivity {
     // Callbacks for finding other devices
     private final EndpointDiscoveryCallback endpointDiscoveryCallback =
             new EndpointDiscoveryCallback() {
+                /**
+                 * Called when an endpoint is found. If the endpoint (device) isn't already in our
+                 * network, we temporarily stop discovery and send a connection request to the device.
+                 * Sometimes, this will fail if device A sends device B a request at the same time
+                 * device B sends device A a request (simultaneous connection clash).
+                 * If this is the case, one device will send the other device a connection request
+                 * again.
+                 * TODO: prevent or reduce simultaneous connection clashes, as they greatly reduce
+                 * connection speed.
+                 * @param endpointId endpoint (device) that has been discovered
+                 * @param info some information about the device, such as name
+                 */
                 @Override
                 public void onEndpointFound(final String endpointId, final DiscoveredEndpointInfo info) {
                     if (!(network.contains(endpointId) || info.getEndpointName().equals(codeName))) {
@@ -145,6 +161,12 @@ public class MainActivity extends AppCompatActivity {
     // Callbacks for connections to other devices
     private final ConnectionLifecycleCallback connectionLifecycleCallback =
             new ConnectionLifecycleCallback() {
+                /**
+                 * Called when a connection request has been received. Reject the request if the
+                 * device is in the network, accept otherwise.
+                 * @param endpointId endpoint (device) that sent the request
+                 * @param connectionInfo some info about the device (e.g. name)
+                 */
                 @Override
                 public void onConnectionInitiated(String endpointId, ConnectionInfo connectionInfo) {
                     if (network.contains(endpointId)) {
@@ -155,6 +177,13 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
 
+                /**
+                 * Called after a connection request is accepted. If it was sucessful, verify again
+                 * that the device isn't already in the network. If it's already in the network, disconnect
+                 * from it. Else, officially add it as a node in the network
+                 * @param endpointId endpoint (device) that we just connected to
+                 * @param result contains status codes (e.g. success)
+                 */
                 @Override
                 public void onConnectionResult(String endpointId, ConnectionResolution result) {
                     network.startDiscovery(); // restart discovery
