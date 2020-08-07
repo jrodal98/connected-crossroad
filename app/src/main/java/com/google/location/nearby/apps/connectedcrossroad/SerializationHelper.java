@@ -8,6 +8,7 @@ import java.io.ObjectOutputStream;
 
 /** Helper class to serialize and deserialize an Object to byte[] and vice-versa **/
 public class SerializationHelper {
+
     public static byte[] serialize(Object object) throws IOException {
         ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream();
         ObjectOutputStream objectOutputStream = new ObjectOutputStream(byteArrayOutputStream);
@@ -18,9 +19,10 @@ public class SerializationHelper {
         return byteArrayOutputStream.toByteArray();
     }
 
-    public static Object deserialize(byte[] bytes) throws IOException, ClassNotFoundException{
+    public static Object deserialize(byte[] bytes) throws IOException, ClassNotFoundException {
         ByteArrayInputStream byteArrayInputStream = new ByteArrayInputStream(bytes);
         ObjectInputStream objectInputStream = new ObjectInputStream(byteArrayInputStream);
         return objectInputStream.readObject();
+
     }
 }

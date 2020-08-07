@@ -11,17 +11,28 @@
         android:id="@+id/deviceName"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:text="@string/device_name_not_set"
+        android:text="@string/default_address"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toBottomOf="@+id/numConnectionsText" />
 
     <TextView
-        android:id="@+id/lastMessage"
+        android:id="@+id/lastMessageTx"
         android:layout_width="0dp"
         android:layout_height="22dp"
         android:text="@string/no_messages_yet"
         android:textAlignment="center"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <TextView
+        android:id="@+id/lastMessageRx"
+        android:layout_width="0dp"
+        android:layout_height="22dp"
+        android:text="@string/no_messages_yet"
+        android:textAlignment="center"
+        app:layout_constraintBottom_toBottomOf="@id/lastMessageTx"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
@@ -41,7 +52,29 @@
         android:importantForAutofill="no"
         android:inputType="text"
         android:text="@string/enter_message_here"
-        app:layout_constraintBottom_toTopOf="@+id/sendMessageButton"
+        app:layout_constraintBottom_toTopOf="@+id/setAddressButton"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <EditText
+        android:id="@+id/editAddressField"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:importantForAutofill="no"
+        android:inputType="text"
+        android:text="@string/send_address"
+        app:layout_constraintBottom_toTopOf="@+id/editTextField"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <EditText
+        android:id="@+id/setAddressField"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:importantForAutofill="no"
+        android:inputType="text"
+        android:text="@string/set_address_field"
+        app:layout_constraintBottom_toTopOf="@+id/editAddressField"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
 
@@ -51,6 +84,15 @@
         android:layout_height="wrap_content"
         android:text="@string/send_message"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+
+    <Button
+        android:id="@+id/setAddressButton"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:text="@string/set_address_button"
+        app:layout_constraintBottom_toTopOf="@+id/sendMessageButton"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent" />
 
