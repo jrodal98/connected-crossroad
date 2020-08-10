@@ -105,7 +105,7 @@ public class MainActivity extends AppCompatActivity {
             @Override
             public void onClick(View view) {
                 String address = setAddressText.getText().toString();
-                network.setName(address);
+                network.setAddress(address);
                 deviceNameText.setText(String.format("Device name: %s", address));
                 //disable the button so it can't be set again
                 setAddressButton.setEnabled(false);
@@ -129,10 +129,9 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onStop() {
-
+        network.stopDiscovery();
         connectionsClient.stopAllEndpoints();
         super.onStop();
-
     }
 
     /**
