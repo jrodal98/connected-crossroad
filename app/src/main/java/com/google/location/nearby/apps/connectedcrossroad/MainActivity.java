@@ -48,9 +48,6 @@ public class MainActivity extends AppCompatActivity {
     // Our handle to Nearby Connections
     private ConnectionsClient connectionsClient;
 
-    // Our randomly generated device name
-    private static final String defaultName = "0";
-
     //private Network network;
     private AODVNetwork network;
 
@@ -84,7 +81,7 @@ public class MainActivity extends AppCompatActivity {
         sendAddressText = findViewById(R.id.editAddressField);
         setAddressText = findViewById(R.id.setAddressField);
 
-        deviceNameText.setText(String.format("Device name: %s", defaultName));
+        deviceNameText.setText("Device name: %s");
 
         sendMessageButton.setOnClickListener(new View.OnClickListener() {
             @Override
@@ -98,7 +95,7 @@ public class MainActivity extends AppCompatActivity {
         });
 
         connectionsClient = Nearby.getConnectionsClient(this);
-        network = new AODVNetwork(defaultName, connectionsClient, numConnectedText, lastMessageRx);
+        network = new AODVNetwork(connectionsClient, numConnectedText, lastMessageRx);
         //network = new Network(codeName, connectionsClient, endpointDiscoveryCallback, connectionLifecycleCallback);
 
         setAddressButton.setOnClickListener(new View.OnClickListener() {
@@ -129,8 +126,7 @@ public class MainActivity extends AppCompatActivity {
 
     @Override
     protected void onStop() {
-        network.stopDiscovery();
-        connectionsClient.stopAllEndpoints();
+        network.stop();
         super.onStop();
     }
 
