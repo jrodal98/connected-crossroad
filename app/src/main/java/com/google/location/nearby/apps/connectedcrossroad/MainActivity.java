@@ -21,10 +21,6 @@ import android.widget.Toast;
 import com.google.android.gms.nearby.Nearby;
 import com.google.android.gms.nearby.connection.ConnectionsClient;
 
-import java.io.IOException;
-import java.util.Locale;
-import java.util.concurrent.Callable;
-
 /**
  * Activity controlling the Message Board
  */
@@ -44,6 +40,7 @@ public class MainActivity extends AppCompatActivity {
             };
 
     private static final int REQUEST_CODE_REQUIRED_PERMISSIONS = 1;
+    private static final int MAX_ADDRESS_LENGTH = 6;
 
     // Our handle to Nearby Connections
     private ConnectionsClient connectionsClient;
@@ -81,33 +78,36 @@ public class MainActivity extends AppCompatActivity {
         sendAddressText = findViewById(R.id.editAddressField);
         setAddressText = findViewById(R.id.setAddressField);
 
-        deviceNameText.setText("Device name: %s");
-
         sendMessageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                try {
-                    sendMessage(sendAddressText.getText().toString(), sendMessageText.getText().toString());
-                } catch (IOException e) {
-                    e.printStackTrace();
-                }
+                sendMessage(sendAddressText.getText().toString(), sendMessageText.getText().toString());
             }
         });
 
         connectionsClient = Nearby.getConnectionsClient(this);
         network = new AODVNetwork(connectionsClient, numConnectedText, lastMessageRx);
-        //network = new Network(codeName, connectionsClient, endpointDiscoveryCallback, connectionLifecycleCallback);
+
+        deviceNameText.setText(String.format("Device name: %s", network.getAddress()));
 
         setAddressButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                String address = setAddressText.getText().toString();
-                network.setAddress(address);
-                deviceNameText.setText(String.format("Device name: %s", address));
-                //disable the button so it can't be set again
-                setAddressButton.setEnabled(false);
-                //start network operations once address is set
-                network.start();
+                String address = setAddressText.getText().toString().trim();
+                //make sure the address has nice format
+                if (address.equals("")) {
+                    Toast.makeText(MainActivity.this, "Address empty", Toast.LENGTH_SHORT).show();
+                } else if (address.length() > MAX_ADDRESS_LENGTH) {
+                    Toast.makeText(MainActivity.this, "Address too long", Toast.LENGTH_SHORT).show();
+                } else {
+                    network.setAddress(address);
+                    deviceNameText.setText(String.format("Device name: %s", address));
+                    //disable the button and field so they can't be set again
+                    setAddressText.setEnabled(false);
+                    setAddressButton.setEnabled(false);
+                    //start network operations once address is set
+                    network.start();
+                }
             }
         });
 
@@ -169,7 +169,7 @@ public class MainActivity extends AppCompatActivity {
         recreate();
     }
 
-    private void sendMessage(String id, String msg) throws IOException {
+    private void sendMessage(String id, String msg) {
         network.sendMessage(id, msg);
         Log.d(TAG, "sendMessage: Sent message");
         lastMessageTx.setText(String.format("%s: %s", id, msg));

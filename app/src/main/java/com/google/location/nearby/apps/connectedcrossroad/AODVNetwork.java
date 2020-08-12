@@ -39,7 +39,8 @@ class AODVNetwork {
     private static final long HELLO_INTERVAL = 5000;
     private static final long ROUTE_EXPIRY_INTERVAL = 5000;
     private static final long ROUTE_TIMEOUT = 5000;
-    private static final long QUEUE_TIMEOUT = 5000;
+    private static final long QUEUE_TIMEOUT = 3000;
+    private static final long QUEUE_INTERVAL = 1000;
     private static final long QUEUE_POLLING_TIMEOUT = 3000;
 
     //self routing info
@@ -90,6 +91,7 @@ class AODVNetwork {
             @Override
             public void run() {
                 while (!Thread.interrupted()) {
+                    //send a hello message to neighbors every hello interval
                     AODVMessage helloMsg = initHELLO();
                     try {
                         broadcastMessage(helloMsg);
@@ -102,41 +104,42 @@ class AODVNetwork {
         };
         this.helloTxThread = new Thread(helloTxRunnable);
 
-        //add message back to queue because it has not expired and rrep may not have returned
         Runnable dataTxRunnable = new Runnable() {
             @Override
             public void run() {
                 while (!Thread.interrupted()) {
                     AODVMessage msg = null;
                     try {
-                        Log.d(TAG, "dataTxRunnable: Pulling message from queue");
                         msg = dataQueue.poll(QUEUE_POLLING_TIMEOUT, TimeUnit.MILLISECONDS);
+                        if (msg != null) {
+                            Log.d(TAG, "dataTxRunnable: Pulled message from queue");
+                            AODVRoute route = getRouteByAddress(msg.header.destAddr);
+                            //if we have a route to the destination, send the message
+                            if (route != null) {
+                                msg.header.nextId = route.nextHopId;
+                                msg.header.nextAddr = route.nextHopAddr;
+                                msg.header.hopCnt = route.hopCnt;
+                                sendMessage(msg);
+                                Log.d(TAG, String.format("dataTxRunnable: Sent AODV DATA to: %s via %s",
+                                        msg.header.destAddr, msg.header.nextId));
+                            } else if (msg.lifetime > System.currentTimeMillis()) {
+                                //else add message back to queue if it has not expired and rrep may not have returned
+                                dataQueue.add(msg);
+                                Log.d(TAG, "dataTxRunnable: Adding unexpired message back to queue");
+                            } else {
+                                Log.d(TAG, "dataTxRunnable: Dropping expired message");
+                            }
+                        }
+                        Thread.sleep(QUEUE_INTERVAL);
                     } catch (InterruptedException e) {
                         e.printStackTrace();
                     }
-                    if (msg != null) {
-                        AODVRoute route = getRouteByAddress(msg.header.destAddr);
-                        if (route != null) {
-                            msg.header.nextId = route.nextHopId;
-                            msg.header.nextAddr = route.nextHopAddr;
-                            msg.header.hopCnt = route.hopCnt;
-                            sendMessage(msg);
-                            Log.d(TAG, String.format("dataTxRunnable: Sent AODV DATA to: %s via %s",
-                                    msg.header.destAddr, msg.header.nextId));
-                        } else if (msg.lifetime < System.currentTimeMillis()) {
-                            //add message back to queue because it has not expired and rrep may not have returned
-                            dataQueue.add(msg);
-                            Log.d(TAG, "dataTxRunnable: Adding unexpired message back to queue");
-                        } else {
-                            Log.d(TAG, "dataTxRunnable: Dropping expired message");
-                        }
-                    }
+
                 }
             }
         };
         this.dataTxThread = new Thread(dataTxRunnable);
 
-        //if the route is expired, remove it from the route table
         Runnable routeExpiryRunnable = new Runnable() {
             @Override
             public void run() {
@@ -217,6 +220,10 @@ class AODVNetwork {
     void setAddress(String address) {
         this.self.address = address;
         Log.d(TAG, "setName: set address to " + address);
+    }
+
+    String getAddress() {
+        return self.address;
     }
 
     public int getLocalSize() {
@@ -672,6 +679,7 @@ class AODVNetwork {
                         //ConnectionsStatusCodes.STATUS_ENDPOINT_IO_ERROR;
                         Log.d(TAG, "onEndpointFound: Connection request failure " + e.getMessage());
 
+                        // connection fails fairly often, need to fix that, sometimes after waiting a while it connects
                         // request connection again on one of the devices
                         // 8012: STATUS_ENDPOINT_IO_ERROR is the simultaneous connection request error
                         if (e.getMessage().startsWith("8012") && self.address.compareTo(info.getEndpointName()) < 0) {
