@@ -21,6 +21,11 @@ import com.google.android.gms.tasks.OnFailureListener;
 
 import java.io.IOException;
 import java.io.Serializable;
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
+import java.net.SocketException;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
@@ -33,6 +38,9 @@ class AODVNetwork {
     private static final String TAG = "connectedcrossroad";
     private static final Strategy STRATEGY = Strategy.P2P_CLUSTER;
     private static final String DEFAULT_NAME = "0";
+
+    private static final int UDP_PORT = 5055;
+    private static final int UDP_BUFSIZE = 2048;
 
     private static final int MAX_NEIGHBORS = 3;
 
@@ -66,12 +74,18 @@ class AODVNetwork {
     //Text view to display number of connected nodes to user
     private final TextView numConnectedText;
 
+    //sockets for communicating with MK6s over UDP
+    private DatagramSocket listenerSocket;
+    private DatagramSocket senderSocket;
+
     //Thread to periodically send hello messages to neighbors to update information
     private final Thread helloTxThread;
     //Thread to pull from queue and send data, waiting for RREPs if necessary
     private final Thread dataTxThread;
     //Thread to periodically check for expired route entries
     private final Thread routeExpiryThread;
+    //Thread to receive UDP messages from MK6 nodes
+    private final Thread udpServerThread;
 
     private boolean searching = false;
 
@@ -90,15 +104,24 @@ class AODVNetwork {
         Runnable helloTxRunnable = new Runnable() {
             @Override
             public void run() {
-                while (!Thread.interrupted()) {
-                    //send a hello message to neighbors every hello interval
-                    AODVMessage helloMsg = initHELLO();
-                    try {
+                try {
+                    senderSocket = new DatagramSocket(null);
+                    senderSocket.setReuseAddress(true);
+                    senderSocket.setBroadcast(true);
+                    //set to MK6 wifi address, make this configurable
+                    //senderSocket.bind(new InetSocketAddress("192.168.10.255", UDP_PORT));
+                    //senderSocket.bind(new InetSocketAddress(UDP_PORT));
+                    while (!Thread.interrupted()) {
+                        //send a hello message to neighbors every hello interval
+                        AODVMessage helloMsg = initHELLO();
                         broadcastMessage(helloMsg);
+                        broadcastUDPMessage("Hello world!");
                         Thread.sleep(HELLO_INTERVAL);
-                    } catch (InterruptedException e) {
-                        e.printStackTrace();
                     }
+                } catch (SocketException | InterruptedException e) {
+                    e.printStackTrace();
+                } finally {
+                    senderSocket.close();
                 }
             }
         };
@@ -108,7 +131,7 @@ class AODVNetwork {
             @Override
             public void run() {
                 while (!Thread.interrupted()) {
-                    AODVMessage msg = null;
+                    AODVMessage msg;
                     try {
                         msg = dataQueue.poll(QUEUE_POLLING_TIMEOUT, TimeUnit.MILLISECONDS);
                         if (msg != null) {
@@ -162,6 +185,35 @@ class AODVNetwork {
         };
         this.routeExpiryThread = new Thread(routeExpiryRunnable);
 
+        Runnable udpServerRunnable = new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    listenerSocket = new DatagramSocket(null);
+                    listenerSocket.setReuseAddress(true);
+                    listenerSocket.setBroadcast(true);
+                    //set to MK6 wifi address, make this configurable
+                    //listenerSocket.bind(new InetSocketAddress("192.168.10.255", UDP_PORT));
+                    listenerSocket.bind(new InetSocketAddress(UDP_PORT));
+                    byte[] inBuffer = new byte[UDP_BUFSIZE];
+                    Log.d(TAG, "Started UDP Server thread, listening on port " + UDP_PORT);
+                    while (!Thread.interrupted()) {
+                        DatagramPacket packet = new DatagramPacket(inBuffer, inBuffer.length);
+                        listenerSocket.receive(packet);
+                        String received = new String(packet.getData(), 0, packet.getLength());
+                        Log.d(TAG, String.format(Locale.US, "AODVServer: Received message: %d bytes from %s",
+                                received.length(), packet.getAddress().getHostAddress()));
+                        Log.d(TAG, "DATA: " + received);
+                    }
+                } catch (IOException e) {
+                    e.printStackTrace();
+                } finally {
+                    listenerSocket.close();
+                }
+            }
+        };
+        this.udpServerThread = new Thread(udpServerRunnable);
+
     }
 
     void start() {
@@ -170,6 +222,7 @@ class AODVNetwork {
         helloTxThread.start();
         dataTxThread.start();
         routeExpiryThread.start();
+        udpServerThread.start();
         Log.d(TAG, "Started AODV network");
     }
 
@@ -177,6 +230,7 @@ class AODVNetwork {
         helloTxThread.interrupt();
         dataTxThread.interrupt();
         routeExpiryThread.interrupt();
+        udpServerThread.interrupt();
         stopDiscovery();
         stopAdvertising();
         connectionsClient.stopAllEndpoints();
@@ -293,6 +347,21 @@ class AODVNetwork {
             sendMessage(msg);
         }
         Log.d(TAG, "broadcastMessage: sent AODV broadcast message");
+    }
+
+    void broadcastUDPMessage(String data) {
+        try {
+            byte[] outBuffer = data.getBytes();
+            //InetAddress broadcastAddr = InetAddress.getByName("255.255.255.255");
+            InetAddress broadcastAddr = InetAddress.getByName("192.168.10.255");
+            //DatagramPacket packet = new DatagramPacket(outBuffer, outBuffer.length, broadcastAddr, UDP_PORT);
+            //send to MK6 wifi
+            DatagramPacket packet = new DatagramPacket(outBuffer, outBuffer.length, broadcastAddr, UDP_PORT);
+            senderSocket.send(packet);
+            Log.d(TAG, String.format("AODVClient: Sent broadcast : %d bytes to %s", outBuffer.length, broadcastAddr));
+        } catch (IOException e) {
+            e.printStackTrace();
+        }
     }
 
     private void handleAODVMessage(AODVMessage msg) {
@@ -679,7 +748,7 @@ class AODVNetwork {
                         //ConnectionsStatusCodes.STATUS_ENDPOINT_IO_ERROR;
                         Log.d(TAG, "onEndpointFound: Connection request failure " + e.getMessage());
 
-                        // connection fails fairly often, need to fix that, sometimes after waiting a while it connects
+                        // connection fails fairly often, sometimes after waiting a while it connects
                         // request connection again on one of the devices
                         // 8012: STATUS_ENDPOINT_IO_ERROR is the simultaneous connection request error
                         if (e.getMessage().startsWith("8012") && self.address.compareTo(info.getEndpointName()) < 0) {
