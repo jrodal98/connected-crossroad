@@ -21,6 +21,8 @@ import android.widget.Toast;
 import com.google.android.gms.nearby.Nearby;
 import com.google.android.gms.nearby.connection.ConnectionsClient;
 
+import java.net.SocketException;
+
 /**
  * Activity controlling the Message Board
  */
@@ -37,6 +39,7 @@ public class MainActivity extends AppCompatActivity {
                     Manifest.permission.CHANGE_WIFI_STATE,
                     Manifest.permission.ACCESS_COARSE_LOCATION,
                     Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.INTERNET,
             };
 
     private static final int REQUEST_CODE_REQUIRED_PERMISSIONS = 1;
