@@ -21,8 +21,6 @@ import android.widget.Toast;
 import com.google.android.gms.nearby.Nearby;
 import com.google.android.gms.nearby.connection.ConnectionsClient;
 
-import java.net.SocketException;
-
 /**
  * Activity controlling the Message Board
  */
@@ -43,7 +41,7 @@ public class MainActivity extends AppCompatActivity {
             };
 
     private static final int REQUEST_CODE_REQUIRED_PERMISSIONS = 1;
-    private static final int MAX_ADDRESS_LENGTH = 6;
+    private static final short MAX_ADDRESS = 10;
 
     // Our handle to Nearby Connections
     private ConnectionsClient connectionsClient;
@@ -84,7 +82,11 @@ public class MainActivity extends AppCompatActivity {
         sendMessageButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                sendMessage(sendAddressText.getText().toString(), sendMessageText.getText().toString());
+                String name = sendAddressText.getText().toString();
+                short address = strToShort(name);
+                if (address != 0) {
+                    sendMessage(address, sendMessageText.getText().toString());
+                }
             }
         });
 
@@ -96,19 +98,15 @@ public class MainActivity extends AppCompatActivity {
         setAddressButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
-                String address = setAddressText.getText().toString().trim();
-                //make sure the address has nice format
-                if (address.equals("")) {
-                    Toast.makeText(MainActivity.this, "Address empty", Toast.LENGTH_SHORT).show();
-                } else if (address.length() > MAX_ADDRESS_LENGTH) {
-                    Toast.makeText(MainActivity.this, "Address too long", Toast.LENGTH_SHORT).show();
-                } else {
+                String name = setAddressText.getText().toString().trim();
+                short address = strToShort(name);
+                if (address != 0) {
                     network.setAddress(address);
                     deviceNameText.setText(String.format("Device name: %s", address));
                     //disable the button and field so they can't be set again
                     setAddressText.setEnabled(false);
                     setAddressButton.setEnabled(false);
-                    //start network operations once address is set
+                    //start network operations after address is set
                     network.start();
                 }
             }
@@ -172,10 +170,26 @@ public class MainActivity extends AppCompatActivity {
         recreate();
     }
 
-    private void sendMessage(String id, String msg) {
+    private void sendMessage(short id, String msg) {
         network.sendMessage(id, msg);
         Log.d(TAG, "sendMessage: Sent message");
         lastMessageTx.setText(String.format("%s: %s", id, msg));
+    }
+
+    //Ensure that string address is convertible to short address
+    private short strToShort(String str) {
+        short num = 0;
+        try {
+            short tmp = Short.parseShort(str);
+            if (tmp > 0 && tmp <= MAX_ADDRESS) {
+                num = tmp;
+            } else {
+                Toast.makeText(MainActivity.this, "Address out of range", Toast.LENGTH_SHORT).show();
+            }
+        } catch (NumberFormatException nfe) {
+            Toast.makeText(MainActivity.this, "Address not number", Toast.LENGTH_SHORT).show();
+        }
+        return num;
     }
 
 }
