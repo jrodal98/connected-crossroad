@@ -28,13 +28,15 @@ import java.net.InetSocketAddress;
 import java.net.SocketException;
 import java.nio.BufferUnderflowException;
 import java.nio.ByteBuffer;
+import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Random;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
-
 
 class AODVNetwork {
 
@@ -44,8 +46,9 @@ class AODVNetwork {
 
     private static final int UDP_PORT = 5055;
     private static final int UDP_BUFSIZE = 2048;
+    private static final short UDP_BROADCAST_ADDR = (short) 0xFFFF;
 
-    private static final int AODV_HEADER_SIZE = 18; //bytes for UDP header
+    private static final int AODV_HEADER_SIZE = 19; //bytes for UDP header
 
     private static final int MAX_NEIGHBORS = 3;
 
@@ -54,7 +57,7 @@ class AODVNetwork {
     private static final long ROUTE_TIMEOUT = 5000;
     private static final long QUEUE_TIMEOUT = 3000;
     private static final long QUEUE_INTERVAL = 1000;
-    private static final long QUEUE_POLLING_TIMEOUT = 3000;
+    private static final long QUEUE_POLLING_TIMEOUT = 5000;
 
     //self routing info
     private final AODVRoute self;
@@ -65,11 +68,16 @@ class AODVNetwork {
     //key is endpointId, value is route
     private final HashMap<String, AODVRoute> neighborsTable;
 
+    //key is address, value is route
+    private final HashMap<Short, AODVRoute> udpNeighborsTable;
+
     //key is address, value is endpointId
     private final HashMap<Short, String> neighborAddressToId;
 
     //queue to store data while waiting for RREP
-    private final BlockingQueue<AODVTxData> dataQueue;
+    private BlockingQueue<AODVTxData> dataTxQueue;
+    //queue for udp messages
+    private final BlockingQueue<AODVTxData> udpTxQueue;
 
     //handles discovery, advertising, and connecting
     private final ConnectionsClient connectionsClient;
@@ -91,6 +99,8 @@ class AODVNetwork {
     private final Thread routeExpiryThread;
     //Thread to receive UDP messages from MK6 nodes
     private final Thread udpServerThread;
+    //Thread for send udp messages so it's not on the main thread
+    private final Thread udpTxThread;
 
     private boolean searching = false;
 
@@ -100,11 +110,18 @@ class AODVNetwork {
         this.self.address = DEFAULT_NAME;
         this.routeTable = new HashMap<>();
         this.neighborsTable = new HashMap<>();
+        this.udpNeighborsTable = new HashMap<>();
         this.neighborAddressToId = new HashMap<>();
-        this.dataQueue = new LinkedBlockingQueue<>();
+        this.dataTxQueue = new LinkedBlockingQueue<>();
+        this.udpTxQueue = new LinkedBlockingQueue<>();
         this.connectionsClient = connectionsClient;
         this.lastMessageRx = lastMessageRx;
         this.numConnectedText = numConnectedText;
+
+        /*
+         * There are some thread safety issues in some of the these threads,
+         * i.e. handleMessage or sendMessage being called simultaneously
+         */
 
         Runnable helloTxRunnable = new Runnable() {
             @Override
@@ -120,14 +137,6 @@ class AODVNetwork {
                         //send a hello message to neighbors every hello interval
                         AODVMessage helloMsg = initHELLO();
                         broadcastMessage(helloMsg);
-                        AODVMessage udpMsg = new AODVMessage();
-                        udpMsg.header.type = AODVMessageType.HELO;
-                        udpMsg.header.bcastSeqNum = 104;
-                        udpMsg.header.sendAddr = 2;
-                        udpMsg.payload = "Howdy!";
-                        udpMsg.header.length = (short) udpMsg.payload.length();
-                        broadcastUDPMessage(udpMsg);
-                        //broadcastUDPMessage("Hello world!");
                         Thread.sleep(HELLO_INTERVAL);
                     }
                 } catch (SocketException | InterruptedException e) {
@@ -144,34 +153,42 @@ class AODVNetwork {
             public void run() {
                 while (!Thread.interrupted()) {
                     AODVTxData txData;
+                    Collection<AODVTxData> txDatas = new ArrayList<>();
                     try {
-                        txData = dataQueue.poll(QUEUE_POLLING_TIMEOUT, TimeUnit.MILLISECONDS);
-                        if (txData != null && txData.msg != null) {
-                            Log.d(TAG, "dataTxRunnable: Pulled message from queue");
-                            AODVMessage msg = txData.msg;
-                            AODVRoute route = getRouteByAddress(msg.header.destAddr);
-                            //if we have a route to the destination, send the message
-                            if (route != null) {
-                                msg.header.nextId = route.nextHopId;
-                                msg.header.nextAddr = route.nextHopAddr;
-                                msg.header.hopCnt = route.hopCnt;
-                                sendMessage(msg);
-                                Log.d(TAG, String.format("dataTxRunnable: Sent AODV DATA to: %s via %s",
-                                        msg.header.destAddr, msg.header.nextId));
-                            } else if (txData.lifetime > System.currentTimeMillis()) {
-                                //add message back to queue if it has not expired and rrep may not have returned
-                                dataQueue.add(txData);
-                                Log.d(TAG, "dataTxRunnable: Adding unexpired message back to queue");
-                            } else {
-                                //drop the message if the time is expired
-                                Log.d(TAG, "dataTxRunnable: Dropping expired message");
+                        while(!dataTxQueue.isEmpty()) {
+                            txData = dataTxQueue.poll(QUEUE_POLLING_TIMEOUT, TimeUnit.MILLISECONDS);
+                            if (txData != null && txData.msg != null) {
+                                Log.d(TAG, "dataTxRunnable: Pulled message from queue");
+                                AODVMessage msg = txData.msg;
+                                AODVRoute route = getRouteByAddress(msg.header.destAddr);
+                                //if we have a route to the destination, send the message
+                                if (route != null) {
+                                    synchronized (route.lock) {
+                                        msg.header.nextId = route.nextHopId;
+                                        msg.header.nextAddr = route.nextHopAddr;
+                                        msg.header.hopCnt = route.hopCnt;
+                                        Log.d(TAG, String.format("dataTxRunnable: Sending AODV DATA to: %s via %s",
+                                                msg.header.destAddr, msg.header.nextAddr));
+                                        sendMessage(msg);
+                                    }
+                                } else if (txData.lifetime > System.currentTimeMillis()) {
+                                    //add message back to queue if it has not expired and rrep may not have returned
+                                    Log.d(TAG, "dataTxRunnable: Adding unexpired message back to queue");
+                                    txDatas.add(txData);
+                                } else {
+                                    //drop the message if the time is expired
+                                    Log.d(TAG, "dataTxRunnable: Dropping expired message");
+                                }
                             }
+                            //need this so we don't poll infinitely when there is one rreq waiting
                         }
                         Thread.sleep(QUEUE_INTERVAL);
                     } catch (InterruptedException e) {
                         e.printStackTrace();
+                    } finally {
+                        dataTxQueue.drainTo(txDatas);
+                        dataTxQueue = new LinkedBlockingQueue<>(txDatas);
                     }
-
                 }
             }
         };
@@ -183,11 +200,26 @@ class AODVNetwork {
                 while (!Thread.interrupted()) {
                     try {
                         long timeMillis = System.currentTimeMillis();
-                        for (AODVRoute route : routeTable.values()) {
-                            //if the route is expired, remove it from the route table
-                            if (route.timeout > timeMillis) {
-                                removeRouteByAddress(route.address);
-                                Log.d(TAG, "routeExpiryRunnable: removed route to " + route.address);
+                        //remove expired routes
+                        synchronized (routeTable) {
+                            for (AODVRoute route : routeTable.values()) {
+                                synchronized (route.lock) {
+                                    if (route.timeout > timeMillis) {
+                                        removeRouteByAddress(route.address);
+                                        Log.d(TAG, "routeExpiryRunnable: removed route to " + route.address);
+                                    }
+                                }
+                            }
+                        }
+                        //remove expired udp neighbors
+                        synchronized (udpNeighborsTable) {
+                            for (AODVRoute route : udpNeighborsTable.values()) {
+                                if (route.timeout > timeMillis) {
+                                    synchronized (route.lock) {
+                                        removeRouteByAddress(route.address);
+                                        Log.d(TAG, "routeExpiryRunnable: removed route to " + route.address);
+                                    }
+                                }
                             }
                         }
                         Thread.sleep(ROUTE_EXPIRY_INTERVAL);
@@ -210,7 +242,7 @@ class AODVNetwork {
                     //listenerSocket.bind(new InetSocketAddress("192.168.10.255", UDP_PORT));
                     listenerSocket.bind(new InetSocketAddress(UDP_PORT));
                     byte[] inBuffer = new byte[UDP_BUFSIZE];
-                    Log.d(TAG, "Started UDP Server thread, listening on port " + UDP_PORT);
+                    Log.d(TAG, "AODVServer: Started UDP Server thread, listening on port " + UDP_PORT);
                     while (!Thread.interrupted()) {
                         DatagramPacket packet = new DatagramPacket(inBuffer, inBuffer.length);
                         listenerSocket.receive(packet);
@@ -218,13 +250,13 @@ class AODVNetwork {
                         Log.d(TAG, String.format(Locale.US, "AODVServer: Received message: %d bytes from %s",
                                 received.length(), packet.getAddress().getHostAddress()));
                         AODVMessage recv = deserializeAODVPacket(packet.getData());
-                        if (recv != null) {
-                            Log.d(TAG, String.format("AODVServer: recv: Type: %d Bcast: %d, SendAddr: %d\nData: %s",
-                                    recv.header.type.getValue(), recv.header.bcastSeqNum, recv.header.sendAddr, recv.payload));
+                        if (recv != null && recv.header.sendDevType != AODVDeviceType.AND &&
+                                (recv.header.destAddr == self.address || recv.header.destAddr == UDP_BROADCAST_ADDR)) {
+                            Log.d(TAG, "AODVServer: handling AODV UDP message");
+                            handleAODVMessage(recv);
+                        } else {
+                            Log.d(TAG, "AODVServer: Dropping UDP message");
                         }
-                        //Log.d(TAG, "DATA: " + received);
-                        //handleAODVMessage(recv);
-
                     }
                 } catch (IOException e) {
                     e.printStackTrace();
@@ -235,6 +267,25 @@ class AODVNetwork {
         };
         this.udpServerThread = new Thread(udpServerRunnable);
 
+        Runnable udpTxRunnable = new Runnable() {
+            @Override
+            public void run() {
+                while (!Thread.interrupted()) {
+                    try {
+                        AODVTxData txData;
+                        Log.d(TAG, "udpTxThread: polling udp message from queue");
+                        txData = udpTxQueue.poll(QUEUE_POLLING_TIMEOUT, TimeUnit.MILLISECONDS);
+                        if (txData != null && txData.msg != null) {
+                            broadcastUDPMessage(txData.msg);
+                        }
+                    } catch (InterruptedException e) {
+                        e.printStackTrace();
+                    }
+                }
+            }
+        };
+        this.udpTxThread = new Thread(udpTxRunnable);
+
     }
 
     void start() {
@@ -244,6 +295,7 @@ class AODVNetwork {
         dataTxThread.start();
         routeExpiryThread.start();
         udpServerThread.start();
+        udpTxThread.start();
         Log.d(TAG, "Started AODV network");
     }
 
@@ -252,6 +304,7 @@ class AODVNetwork {
         dataTxThread.interrupt();
         routeExpiryThread.interrupt();
         udpServerThread.interrupt();
+        udpTxThread.interrupt();
         stopDiscovery();
         stopAdvertising();
         connectionsClient.stopAllEndpoints();
@@ -302,27 +355,54 @@ class AODVNetwork {
     }
 
     public int getLocalSize() {
-        return 1 + neighborsTable.size();
+        synchronized (neighborsTable) {
+            return 1 + neighborsTable.size();
+        }
     }
 
     private AODVRoute getRouteByAddress(short address) {
         AODVRoute route;
-        if (routeTable.containsKey(address)) {
-            route = routeTable.get(address);
-        } else {
-            String endpointId = neighborAddressToId.get(address);
-            route = neighborsTable.get(endpointId);
+        synchronized (routeTable) {
+            if (routeTable.containsKey(address)) {
+                route = routeTable.get(address);
+                return route;
+            }
         }
-        return route;
+        synchronized (udpNeighborsTable) {
+            if (udpNeighborsTable.containsKey(address)) {
+                route = udpNeighborsTable.get(address);
+                return route;
+            }
+        }
+        synchronized (neighborsTable) {
+            String endpointId = neighborAddressToId.get(address);
+            if (neighborsTable.containsKey(endpointId)) {
+                route = neighborsTable.get(endpointId);
+                return route;
+            }
+        }
+        return null;
     }
 
     private void removeRouteByAddress(short address) {
-        if (routeTable.containsKey(address)) {
-            routeTable.remove(address);
-        } else {
+        synchronized (routeTable) {
+            if (routeTable.containsKey(address)) {
+                routeTable.remove(address);
+                return;
+            }
+        }
+        synchronized (udpNeighborsTable) {
+            if (udpNeighborsTable.containsKey(address)) {
+                udpNeighborsTable.remove(address);
+                return;
+            }
+        }
+        synchronized (neighborsTable) {
             String endpointId = neighborAddressToId.get(address);
-            neighborsTable.remove(endpointId);
-            neighborAddressToId.remove(address);
+            if (neighborsTable.containsKey(endpointId)) {
+                neighborsTable.remove(endpointId);
+                neighborAddressToId.remove(address);
+            }
         }
     }
 
@@ -330,73 +410,75 @@ class AODVNetwork {
         AODVMessage userMessage = initDATA(address, data);
         AODVRoute route = getRouteByAddress(address);
         if (route != null) {
-            Log.d(TAG, "sendMessage: Sending AODV DATA to: " + route.address);
-            userMessage.header.nextId = route.nextHopId;
-            userMessage.header.hopCnt = route.hopCnt;
-            userMessage.header.destSeqNum = route.seqNum;
-            sendMessage(userMessage);
-            Log.d(TAG, "sendMessage: Sent AODV DATA to: " + route.address);
+            synchronized (route.lock) {
+                Log.d(TAG, "sendMessage: Sending AODV DATA to: " + route.address);
+                userMessage.header.nextId = route.nextHopId;
+                userMessage.header.hopCnt = route.hopCnt;
+                userMessage.header.destSeqNum = route.seqNum;
+                sendMessage(userMessage);
+                Log.d(TAG, "sendMessage: Sent AODV DATA to: " + route.address);
+            }
         } else {
             Log.d(TAG, "sendMessage: Initiating RREQ for route to " + address);
             AODVTxData txData = new AODVTxData(userMessage);
             //add to message queue to be processed when route is available
-            dataQueue.add(txData);
+            dataTxQueue.add(txData);
             AODVMessage rreq = initRREQ(address);
             broadcastMessage(rreq);
             Log.d(TAG, "sendMessage: Sent AODV RREQ");
         }
     }
 
-    void sendMessage(AODVMessage msg) {
+    private void sendMessage(AODVMessage msg) {
         msg.header.sendAddr = self.address;
-        byte[] bytes = new byte[0];
+        Log.d(TAG, "sendMessage: Set sendAddr to: " + self.address);
+        if (msg.header.nextId != null) {
+            sendCCMessage(msg);
+        } else {
+            udpTxQueue.add(new AODVTxData(msg));
+        }
+    }
+
+    private void broadcastMessage(AODVMessage msg) {
+        msg.header.sendAddr = self.address;
+        broadcastCCMessage(msg);
+        msg.header.destAddr = UDP_BROADCAST_ADDR;
+        udpTxQueue.add(new AODVTxData(msg));
+    }
+
+    private synchronized void sendCCMessage(AODVMessage msg) {
         try {
-            bytes = SerializationHelper.serialize(msg);
+            byte[] bytes = SerializationHelper.serialize(msg);
+            Payload payload = Payload.fromBytes(bytes);
+            connectionsClient.sendPayload(msg.header.nextId, payload);
+            Log.d(TAG, "sendMessage: Sent AODV CC message");
         } catch (IOException e) {
             Log.e(TAG, "ERROR: Serializing data failed");
             e.printStackTrace();
         }
-        Payload payload = Payload.fromBytes(bytes);
-        connectionsClient.sendPayload(msg.header.nextId, payload);
-        Log.d(TAG, "sendMessage: Sent AODV message");
     }
 
-    void broadcastMessage(AODVMessage msg) {
-        for (AODVRoute neighbor : neighborsTable.values()) {
-            msg.header.nextAddr = neighbor.address;
-            msg.header.nextId = neighbor.nextHopId;
-            sendMessage(msg);
+    private void broadcastCCMessage(AODVMessage msg) {
+        synchronized (neighborsTable) {
+            for (AODVRoute neighbor : neighborsTable.values()) {
+                msg.header.nextAddr = neighbor.address;
+                msg.header.nextId = neighbor.nextHopId;
+                sendCCMessage(msg);
+            }
         }
-        Log.d(TAG, "broadcastMessage: sent AODV broadcast message");
+        Log.d(TAG, "broadcastMessage: sent AODV CC broadcast message");
     }
 
-    /*
-    void broadcastUDPMessage(String data) {
+    private synchronized void broadcastUDPMessage(AODVMessage msg) {
         try {
-            byte[] outBuffer = data.getBytes();
-            InetAddress broadcastAddr = InetAddress.getByName("255.255.255.255");
-            //InetAddress broadcastAddr = InetAddress.getByName("192.168.10.255");
-            //DatagramPacket packet = new DatagramPacket(outBuffer, outBuffer.length, broadcastAddr, UDP_PORT);
-            //send to MK6 wifi
-            DatagramPacket packet = new DatagramPacket(outBuffer, outBuffer.length, broadcastAddr, UDP_PORT);
-            senderSocket.send(packet);
-            Log.d(TAG, String.format("AODVClient: Sent broadcast : %d bytes to %s", outBuffer.length, broadcastAddr));
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-     */
-
-    void broadcastUDPMessage(AODVMessage msg) {
-        try {
-            byte[] outBuffer = serializeAODVPacket(msg);
-            InetAddress broadcastAddr = InetAddress.getByName("255.255.255.255");
-            //InetAddress broadcastAddr = InetAddress.getByName("192.168.10.255");
-            //DatagramPacket packet = new DatagramPacket(outBuffer, outBuffer.length, broadcastAddr, UDP_PORT);
-            //send to MK6 wifi
-            DatagramPacket packet = new DatagramPacket(outBuffer, outBuffer.length, broadcastAddr, UDP_PORT);
-            senderSocket.send(packet);
-            Log.d(TAG, String.format("AODVClient: Sent broadcast : %d bytes to %s", outBuffer.length, broadcastAddr));
+                byte[] outBuffer = serializeAODVPacket(msg);
+                InetAddress broadcastAddr = InetAddress.getByName("255.255.255.255");
+                //InetAddress broadcastAddr = InetAddress.getByName("192.168.10.255");
+                //DatagramPacket packet = new DatagramPacket(outBuffer, outBuffer.length, broadcastAddr, UDP_PORT);
+                //send to MK6 wifi
+                DatagramPacket packet = new DatagramPacket(outBuffer, outBuffer.length, broadcastAddr, UDP_PORT);
+                senderSocket.send(packet);
+                Log.d(TAG, String.format("AODVClient: Sent broadcast : %d bytes to %s", outBuffer.length, broadcastAddr));
         } catch (IOException e) {
             e.printStackTrace();
         }
@@ -428,18 +510,45 @@ class AODVNetwork {
         short sendAddr = msg.header.sendAddr;
         String sendId = msg.header.sendId;
         Log.d(TAG, "handleHELLO: Received AODV HELLO from: " + sendAddr);
-        if (neighborsTable.containsKey(sendId)) {
-            AODVRoute neighbor = neighborsTable.get(sendId);
-            //we can only know neighbor Addr from hello messages
-            if (neighbor != null) {
-                if (!neighborAddressToId.containsKey(sendAddr)) {
-                    neighborAddressToId.put(sendAddr, sendId);
+        AODVRoute neighbor;
+        synchronized (neighborsTable) {
+            if (neighborsTable.containsKey(sendId)) {
+                neighbor = neighborsTable.get(sendId);
+                //we can only know neighbor Addr from hello messages
+                if (neighbor != null) {
+                    synchronized (neighbor.lock) {
+                        if (!neighborAddressToId.containsKey(sendAddr)) {
+                            neighborAddressToId.put(sendAddr, sendId);
+                        }
+                        neighbor.seqNum = msg.header.srcSeqNum;
+                        neighbor.bcastSeqNum = msg.header.bcastSeqNum;
+                    }
                 }
+                return;
+            }
+        }
+        synchronized (udpNeighborsTable) {
+            if (udpNeighborsTable.containsKey(sendAddr)) {
+                neighbor = udpNeighborsTable.get(sendAddr);
+                if (neighbor != null) {
+                    synchronized (neighbor.lock) {
+                        neighbor.seqNum = msg.header.srcSeqNum;
+                        neighbor.bcastSeqNum = msg.header.bcastSeqNum;
+                        neighbor.timeout = System.currentTimeMillis() + ROUTE_TIMEOUT;
+                    }
+                }
+            } else {
+                //make new route for neighbor
+                Log.d(TAG, "handleHELLO: Creating new route for UDP neighbor");
+                neighbor = new AODVRoute();
+                neighbor.address = sendAddr;
+                neighbor.nextHopAddr = sendAddr;
                 neighbor.seqNum = msg.header.srcSeqNum;
                 neighbor.bcastSeqNum = msg.header.bcastSeqNum;
+                //need a timeout for these neighbors because connection is only maintained by hellos
+                neighbor.timeout = System.currentTimeMillis() + ROUTE_TIMEOUT;
+                udpNeighborsTable.put(sendAddr, neighbor);
             }
-        } else {
-            Log.d(TAG, "handleHELLO: Invalid Id for HELLO message");
         }
     }
 
@@ -454,9 +563,11 @@ class AODVNetwork {
             Log.d(TAG, "handleData: DATA in transit to: " + destAddr);
             AODVRoute route = getRouteByAddress(destAddr);
             if (route != null) {
-                msg.header.nextId = route.nextHopId;
-                sendMessage(msg);
-                Log.d(TAG, "handleData: Sent DATA to next hop: " + route.nextHopAddr);
+                synchronized (route.lock) {
+                    msg.header.nextId = route.nextHopId;
+                    sendMessage(msg);
+                    Log.d(TAG, "handleData: Sent DATA to next hop: " + route.nextHopAddr);
+                }
             } else {
                 Log.d(TAG, "handleData: DATA error for: " + destAddr);
                 short srcAddr = msg.header.srcAddr;
@@ -482,33 +593,40 @@ class AODVNetwork {
         AODVRoute srcRoute = getRouteByAddress(srcAddr);
         //set up reverse route to src if one doesn't exist
         if (srcRoute == null) {
-            Log.d(TAG, "handleRREQ: creating reverse route to: " + srcAddr);
-            String sendId = msg.header.sendId;
-            srcRoute = new AODVRoute();
-            srcRoute.address = srcAddr;
-            srcRoute.seqNum = msg.header.srcSeqNum;
-            srcRoute.nextHopId = sendId;
-            srcRoute.nextHopAddr = msg.header.sendAddr;
-            srcRoute.hopCnt = (byte) (msg.header.hopCnt + 1);
-            srcRoute.timeout = System.currentTimeMillis() + ROUTE_TIMEOUT;
-            routeTable.put(srcAddr, srcRoute);
+                Log.d(TAG, "handleRREQ: creating reverse route to: " + srcAddr);
+                String sendId = msg.header.sendId;
+                srcRoute = new AODVRoute();
+                srcRoute.address = srcAddr;
+                srcRoute.seqNum = msg.header.srcSeqNum;
+                srcRoute.nextHopId = sendId;
+                srcRoute.nextHopAddr = msg.header.sendAddr;
+                srcRoute.hopCnt = (byte) (msg.header.hopCnt + 1);
+                srcRoute.timeout = System.currentTimeMillis() + ROUTE_TIMEOUT;
+                synchronized (routeTable) {
+                    routeTable.put(srcAddr, srcRoute);
+                }
         }
         //check bcast seq num for route freshness and to prevent loops
-        if (msg.header.bcastSeqNum <= srcRoute.bcastSeqNum) {
-            return;
+        synchronized (srcRoute.lock) {
+            if (msg.header.bcastSeqNum <= srcRoute.bcastSeqNum) {
+                return;
+            }
+            srcRoute.bcastSeqNum = msg.header.bcastSeqNum;
         }
-        srcRoute.bcastSeqNum = msg.header.bcastSeqNum;
 
         AODVRoute destRoute = getRouteByAddress(destAddr);
-        if (destAddr == self.address || (destRoute != null &&
-                msg.header.destSeqNum <= destRoute.seqNum)) {
-            self.seqNum++; //inc seq num?
-            AODVMessage rrep = initRREP(srcAddr);
-            if (rrep != null) {
-                Log.d(TAG, "handleRREQ: sending RREP to: " + srcAddr);
-                sendMessage(rrep);
-            } else {
-                Log.d(TAG, "handleRREQ: dropping RREP to: " + srcAddr);
+        if (destRoute != null) {
+            synchronized (destRoute.lock) {
+                if (destAddr == self.address || msg.header.destSeqNum <= destRoute.seqNum) {
+                    self.seqNum++; //inc seq num?
+                    AODVMessage rrep = initRREP(srcAddr);
+                    if (rrep != null) {
+                        Log.d(TAG, "handleRREQ: sending RREP to: " + srcAddr);
+                        sendMessage(rrep);
+                    } else {
+                        Log.d(TAG, "handleRREQ: dropping RREP to: " + srcAddr);
+                    }
+                }
             }
         } else {
             //make sure no loops are happening with this
@@ -522,32 +640,38 @@ class AODVNetwork {
         short destAddr = msg.header.destAddr;
         Log.d(TAG, "handleRREP: Received AODV RREP message from: " + srcAddr);
         AODVRoute destRoute = getRouteByAddress(destAddr);
-        if (destAddr == self.address || (destRoute != null && msg.header.srcSeqNum <= destRoute.seqNum)) {
-            //create forward route to src
-            AODVRoute srcRoute = getRouteByAddress(srcAddr);
-            if (srcRoute == null) {
-                Log.d(TAG, "handleRREP: Creating forward route to: " + srcAddr);
-                srcRoute = new AODVRoute();
-                srcRoute.address = srcAddr;
-                srcRoute.nextHopId = msg.header.sendId;
-                srcRoute.nextHopAddr = msg.header.sendAddr;
-                srcRoute.hopCnt = (byte) (msg.header.hopCnt - 1);
-            }
-            //to prevent loops, only forward one of each rrep
-            if (srcRoute.seqNum >= msg.header.srcSeqNum) {
-                return;
-            }
-            srcRoute.seqNum = msg.header.srcSeqNum;
-            srcRoute.timeout = System.currentTimeMillis() + ROUTE_TIMEOUT;
+        if (destRoute != null) {
+            synchronized (destRoute.lock) {
+                if (destAddr == self.address || msg.header.srcSeqNum <= destRoute.seqNum) {
+                    //create forward route to src
+                    AODVRoute srcRoute = getRouteByAddress(srcAddr);
+                    if (srcRoute == null) {
+                        Log.d(TAG, "handleRREP: Creating forward route to: " + srcAddr);
+                        srcRoute = new AODVRoute();
+                        srcRoute.address = srcAddr;
+                        srcRoute.nextHopId = msg.header.sendId;
+                        srcRoute.nextHopAddr = msg.header.sendAddr;
+                        srcRoute.hopCnt = (byte) (msg.header.hopCnt - 1);
+                    }
+                    synchronized (srcRoute.lock) {
+                        //to prevent loops, only forward one of each rrep
+                        if (srcRoute.seqNum >= msg.header.srcSeqNum) {
+                            return;
+                        }
+                        srcRoute.seqNum = msg.header.srcSeqNum;
+                        srcRoute.timeout = System.currentTimeMillis() + ROUTE_TIMEOUT;
+                    }
 
-            if (destAddr == self.address) {
-                Log.d(TAG, "handleRREP: RREP reached destination");
-            } else {
-                msg.header.nextId = destRoute.nextHopId;
-                msg.header.nextAddr = destRoute.nextHopAddr;
-                msg.header.hopCnt--;
-                Log.d(TAG, "handleRREP: Forwarding RREP to next hop");
-                sendMessage(msg);
+                    if (destAddr == self.address) {
+                        Log.d(TAG, "handleRREP: RREP reached destination");
+                    } else {
+                        msg.header.nextId = destRoute.nextHopId;
+                        msg.header.nextAddr = destRoute.nextHopAddr;
+                        msg.header.hopCnt--;
+                        Log.d(TAG, "handleRREP: Forwarding RREP to next hop");
+                        sendMessage(msg);
+                    }
+                }
             }
         } else {
             Log.d(TAG, String.format("handleRREP: ERROR in RREP from %s to %s", srcAddr, destAddr));
@@ -565,16 +689,20 @@ class AODVNetwork {
         short destAddr = msg.header.destAddr;
         Log.d(TAG, "handleRERR: Received AODV RERR message from: " + srcAddr);
         removeRouteByAddress(srcAddr);
-        AODVRoute route = getRouteByAddress(destAddr);
         if (destAddr == self.address) {
             Log.d(TAG, "handleRERR: RERR reached destination");
-        } else if (route != null) {
-            Log.d(TAG, "handleRERR: Forwarding RERR to next hop: " + route.nextHopAddr);
-            msg.header.nextId = route.nextHopId;
-            //msg.header.sendAddr = self.address;
-            sendMessage(msg);
         } else {
-            Log.d(TAG, "handleRERR: Dropping RERR to: " + destAddr);
+            AODVRoute route = getRouteByAddress(destAddr);
+            if (route != null) {
+                synchronized (route.lock) {
+                    Log.d(TAG, "handleRERR: Forwarding RERR to next hop: " + route.nextHopAddr);
+                    msg.header.nextId = route.nextHopId;
+                    //msg.header.sendAddr = self.address;
+                    sendMessage(msg);
+                }
+            } else {
+                Log.d(TAG, "handleRERR: Dropping RERR to: " + destAddr);
+            }
         }
     }
 
@@ -612,14 +740,17 @@ class AODVNetwork {
         msg.header.type = AODVMessageType.RREQ;
         msg.header.srcAddr = self.address;
         msg.header.srcSeqNum = self.seqNum;
+        msg.header.sendAddr = self.address;
         msg.header.bcastSeqNum = ++self.bcastSeqNum; //inc on each rreq
         msg.header.destAddr = destAddr;
         msg.header.length = 0;
         //may still have active route but need updated information
         AODVRoute route = getRouteByAddress(destAddr);
         if (route != null) {
-            msg.header.destSeqNum = route.seqNum;
-            msg.header.hopCnt = route.hopCnt;
+            synchronized (route.lock) {
+                msg.header.destSeqNum = route.seqNum;
+                msg.header.hopCnt = route.hopCnt;
+            }
         } else {
             msg.header.destSeqNum = 0;
             msg.header.hopCnt = 0;
@@ -632,17 +763,19 @@ class AODVNetwork {
         AODVMessage msg = null;
         AODVRoute route = getRouteByAddress(destAddr);
         if (route != null) {
-            msg = new AODVMessage();
-            msg.header.type = AODVMessageType.RREP;
-            msg.header.srcAddr = self.address;
-            msg.header.srcSeqNum = self.seqNum;
-            msg.header.bcastSeqNum = self.bcastSeqNum;
-            msg.header.destAddr = route.address;
-            msg.header.destSeqNum = route.seqNum;
-            msg.header.nextId = route.nextHopId;
-            msg.header.nextAddr = route.nextHopAddr;
-            msg.header.hopCnt = route.hopCnt;
-            msg.header.length = 0;
+            synchronized (route.lock) {
+                msg = new AODVMessage();
+                msg.header.type = AODVMessageType.RREP;
+                msg.header.srcAddr = self.address;
+                msg.header.srcSeqNum = self.seqNum;
+                msg.header.bcastSeqNum = self.bcastSeqNum;
+                msg.header.destAddr = route.address;
+                msg.header.destSeqNum = route.seqNum;
+                msg.header.nextId = route.nextHopId;
+                msg.header.nextAddr = route.nextHopAddr;
+                msg.header.hopCnt = route.hopCnt;
+                msg.header.length = 0;
+            }
         }
         return msg;
     }
@@ -653,17 +786,19 @@ class AODVNetwork {
         //need an active route to dest;
         AODVRoute route = getRouteByAddress(destAddr);
         if (route != null) {
-            msg = new AODVMessage();
-            msg.header.type = AODVMessageType.RERR;
-            msg.header.srcAddr = self.address;
-            msg.header.srcSeqNum = self.seqNum;
-            msg.header.bcastSeqNum = self.bcastSeqNum;
-            msg.header.destAddr = route.address;
-            msg.header.destSeqNum = route.seqNum;
-            msg.header.nextId = route.nextHopId;
-            msg.header.nextAddr = route.nextHopAddr;
-            msg.header.hopCnt = Byte.MAX_VALUE; //signifying broken link to prevent loops
-            msg.header.length = 0;
+            synchronized (route.lock) {
+                msg = new AODVMessage();
+                msg.header.type = AODVMessageType.RERR;
+                msg.header.srcAddr = self.address;
+                msg.header.srcSeqNum = self.seqNum;
+                msg.header.bcastSeqNum = self.bcastSeqNum;
+                msg.header.destAddr = route.address;
+                msg.header.destSeqNum = route.seqNum;
+                msg.header.nextId = route.nextHopId;
+                msg.header.nextAddr = route.nextHopAddr;
+                msg.header.hopCnt = Byte.MAX_VALUE; //signifying broken link to prevent loops
+                msg.header.length = 0;
+            }
         }
         return msg;
     }
@@ -684,9 +819,33 @@ class AODVNetwork {
                 valToType.put(type.getValue(), type);
             }
         }
+
         AODVMessageType(byte id) { this.id = id; }
+
         byte getValue() { return id; }
+
         static AODVMessageType valueOf(byte id) {
+            return valToType.containsKey(id) ? valToType.get(id) : NONE;
+        }
+    }
+
+    private enum AODVDeviceType implements Serializable {
+        NONE((byte) 0),
+        AND((byte) 1),
+        MK6((byte) 2);
+
+        private final byte id;
+        private static final Map<Byte, AODVDeviceType> valToType = new HashMap<>();
+        static {
+            for (AODVDeviceType type : AODVDeviceType.values()) {
+                valToType.put(type.getValue(), type);
+            }
+        }
+        AODVDeviceType(byte id) { this.id = id; }
+
+        byte getValue() { return id; }
+
+        static AODVDeviceType valueOf(byte id) {
             return valToType.containsKey(id) ? valToType.get(id) : NONE;
         }
     }
@@ -702,6 +861,7 @@ class AODVNetwork {
         String nextId; //endpointId for routing
         short sendAddr;
         String sendId; //endpointId for routing, this will be set in onReceivedPayload;
+        AODVDeviceType sendDevType;
         short srcSeqNum;
         short bcastSeqNum;
         short destSeqNum;
@@ -716,6 +876,7 @@ class AODVNetwork {
             this.nextId = null;
             this.sendAddr = 0;
             this.sendId = null;
+            this.sendDevType = AODVDeviceType.AND;
             this.srcSeqNum = 0;
             this.bcastSeqNum = 0;
             this.destSeqNum = 0;
@@ -759,6 +920,7 @@ class AODVNetwork {
         short bcastSeqNum;
         byte hopCnt;
         long timeout;
+        final Object lock = new Object();
 
         AODVRoute() {
             this.address = 0;
@@ -783,10 +945,13 @@ class AODVNetwork {
                 .putShort(msg.header.destSeqNum)
                 .putShort(msg.header.nextAddr)
                 .putShort(msg.header.sendAddr)
+                .put(msg.header.sendDevType.getValue())
                 .putShort(msg.header.bcastSeqNum)
                 .put(msg.header.hopCnt)
-                .putShort(msg.header.length)
-                .put(msg.payload.getBytes()); //specify encoding?
+                .putShort(msg.header.length);
+        if (msg.payload != null) {
+                packet = packet.put(msg.payload.getBytes()); //specify encoding?
+        }
         return packet.array();
     }
 
@@ -802,6 +967,7 @@ class AODVNetwork {
             msg.header.destSeqNum = packet.getShort();
             msg.header.nextAddr = packet.getShort();
             msg.header.sendAddr = packet.getShort();
+            msg.header.sendDevType = AODVDeviceType.valueOf(packet.get());
             msg.header.bcastSeqNum = packet.getShort();
             msg.header.hopCnt = packet.get();
             msg.header.length = packet.getShort();
@@ -857,11 +1023,15 @@ class AODVNetwork {
                         Log.d(TAG, "onEndpointFound: Connection request failure " + e.getMessage());
 
                         // connection fails fairly often, sometimes after waiting a while it connects
-                        // request connection again on one of the devices
+                        // request connection again on one? of the devices
                         // 8012: STATUS_ENDPOINT_IO_ERROR is the simultaneous connection request error
                         if (e.getMessage().startsWith("8012") && self.address != Short.parseShort(info.getEndpointName())) {
-                            Log.d(TAG, "onEndpointFound: Sending another connection request.");
-                            connectionsClient.requestConnection(String.valueOf(self.address), endpointId, connectionLifecycleCallback);
+                            //temporary solution to reduce the frequency of collisions
+                            if (new Random().nextInt() % 2 == 0) {
+                                Log.d(TAG, "onEndpointFound: Sending another connection request.");
+                                connectionsClient.requestConnection(String.valueOf(self.address),
+                                        endpointId, connectionLifecycleCallback);
+                            }
                         }
                     }
                 });
@@ -907,18 +1077,20 @@ class AODVNetwork {
         public void onConnectionResult(@NonNull String endpointId, ConnectionResolution result) {
             if (result.getStatus().isSuccess()) {
                 Log.i(TAG, "onConnectionResult: Connection successful");
-                if (neighborsTable.containsKey(endpointId)) {
-                    Log.i(TAG, "onConnectionResult: Neighbor already connected: " + endpointId);
-                    //connectionsClient.disconnectFromEndpoint(endpointId);
-                } else if (neighborsTable.size() < MAX_NEIGHBORS) {
-                    AODVRoute newNeighbor = new AODVRoute();
-                    newNeighbor.id = endpointId;
-                    newNeighbor.nextHopId = endpointId;
-                    neighborsTable.put(endpointId, newNeighbor);
-                    Log.d(TAG, "onConnectionResult: Neighbor added: " +  endpointId);
-                    updateDevicesConnected();
-                } else {
-                    Log.d(TAG, "onConnectionResult: Too many neighbors: " + endpointId);
+                synchronized (neighborsTable) {
+                    if (neighborsTable.containsKey(endpointId)) {
+                        Log.i(TAG, "onConnectionResult: Neighbor already connected: " + endpointId);
+                        //connectionsClient.disconnectFromEndpoint(endpointId);
+                    } else if (neighborsTable.size() < MAX_NEIGHBORS) {
+                        AODVRoute newNeighbor = new AODVRoute();
+                        newNeighbor.id = endpointId;
+                        newNeighbor.nextHopId = endpointId;
+                        neighborsTable.put(endpointId, newNeighbor);
+                        Log.d(TAG, "onConnectionResult: Neighbor added: " + endpointId);
+                        updateDevicesConnected();
+                    } else {
+                        Log.d(TAG, "onConnectionResult: Too many neighbors: " + endpointId);
+                    }
                 }
             } else {
                 Log.i(TAG, "onConnectionResult: Connection failed, retrying: " + endpointId);
@@ -930,7 +1102,9 @@ class AODVNetwork {
         @Override
         public void onDisconnected(@NonNull String endpointId) {
             Log.i(TAG, "onDisconnected: disconnected from " + endpointId);
-            neighborsTable.remove(endpointId);
+            synchronized (neighborsTable) {
+                neighborsTable.remove(endpointId);
+            }
             updateDevicesConnected();
         }
     };
