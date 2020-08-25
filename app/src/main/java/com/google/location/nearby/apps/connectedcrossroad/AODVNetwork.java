@@ -57,7 +57,7 @@ class AODVNetwork {
     private static final long HELLO_INTERVAL = 2000;
     private static final long ROUTE_EXPIRY_INTERVAL = 3000;
     private static final long ROUTE_TIMEOUT = 7000;
-    private static final long QUEUE_TIMEOUT = 3000;
+    private static final long QUEUE_TIMEOUT = 7000;
     private static final long QUEUE_INTERVAL = 500;
     private static final long QUEUE_POLLING_TIMEOUT = 5000;
 
