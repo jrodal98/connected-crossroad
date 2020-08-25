@@ -23,7 +23,7 @@ Details about the AODV routing algorithm can be found in
 
 An example of another AODV application that targeted a non-Android device, but connected with
 Androids in this application via UDP is
-[AODV MK6C](https://github.com/fdfea/aodv-mk6c).
+[AODV](https://github.com/fdfea/aodv).
 
 ### Future Development
 
