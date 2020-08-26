@@ -3,9 +3,13 @@
   <string name="app_name">Connected Crossroad</string>
   <string name="error_missing_permissions">Cannot start without required permissions</string>
   <string name="device_name_not_set">Device name: not set</string>
-  <string name="enter_message_here">Enter Message Here!</string>
+  <string name="enter_message_here">Enter Message Here</string>
+  <string name="send_address">Enter Send Address Here</string>
+  <string name="set_address_field">Set Address Here</string>
   <string name="send_message">Send Message</string>
   <string name="active_connections_0">Active Connections: 0</string>
   <string name="no_messages_yet">No messages yet!</string>
-    <string name="devices_in_network_1">Devices in network: 1</string>
+  <string name="default_address">0</string>
+  <string name="set_address_button">Set Address</string>
+  <string name="devices_in_network_1">Devices in network: 1</string>
 </resources>
